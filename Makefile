@@ -66,7 +66,7 @@ program_CXX_OBJS := ${program_CXX_SRCS:.cpp=.o}
 program_CXX_ASMS := ${program_CXX_SRCS:.cpp=.s}
 
 program_OBJS := $(program_C_OBJS) $(program_CXX_OBJS)
-program_INCLUDE_DIRS := "/home/hypermania/Dropbox/Research/FreeStreamingULDM/Numerics/lite-cosmic-sim/external/"
+program_INCLUDE_DIRS := "/home/hypermania/Research/FreeStreamingULDM/Cosmic-Fields-Lite/external/"
 program_LIBRARY_DIRS :=
 program_LIBRARIES := fftw3 m dl
 
@@ -91,7 +91,7 @@ endif
 
 # Compiler flags
 CXXFLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
-CXXFLAGS += -std=c++20 -Wall -DEIGEN_NO_CUDA #-DEIGEN_NO_DEBUG
+CXXFLAGS += -std=c++20 -Wall -DEIGEN_NO_CUDA -ftemplate-depth=20000 #-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG 
 CXXFLAGS += -march=native -pthread
 CXXFLAGS += -O3 -ffast-math
 

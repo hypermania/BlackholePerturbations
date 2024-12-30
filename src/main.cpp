@@ -1,31 +1,23 @@
-// #include <cstdlib>
-// #include <cmath>
-// #include <iostream>
-// #include <iomanip>
-// #include <fstream>
 #include <vector>
-// #include <algorithm>
-// #include <chrono>
-// #include <string>
-// #include <filesystem>
+#include <algorithm>
+#include <typeinfo>
 
 #include <Eigen/Dense>
-#include <boost/math/special_functions/lambert_w.hpp>
 #include <boost/numeric/odeint.hpp>
 #include <boost/numeric/odeint/external/eigen/eigen.hpp>
+#include "odeint_eigen/eigen_operations.hpp"
+
+#include <boost/multiprecision/cpp_bin_float.hpp>
 
 #include "utility.hpp"
 #include "param.hpp"
-// #include "initializer.hpp"
-// #include "random_field.hpp"
 #include "io.hpp"
-// #include "fdm3d.hpp"
-// #include "physics.hpp"
-// #include "equations.hpp"
-// #include "workspace.hpp"
 #include "observer.hpp"
-// #include "midpoint.hpp"
-// #include "wkb.hpp"
+#include "regge_wheeler.hpp"
+#include "cubic_scalar_simplified.hpp"
+#include "cubic_scalar.hpp"
+
+#include "boost/type_index.hpp"
 
 // #ifndef DISABLE_CUDA
 // #include <thrust/device_vector.h>
@@ -34,82 +26,178 @@
 // #include "fdm3d_cuda.cuh"
 // #endif
 
-struct QuasiNormalModePDEParam {
-  long long int s;
-  long long int l;
-  double r0;
+
+void run_quadratic_eqn(void);
+void run_full_eqn(void);
+
+struct FixedPositionObserver {
+  typedef Eigen::ArrayXd State;
+  std::string dir;
+  std::vector<long long int> positions;
+  std::vector<double> t_list;
+  std::vector<double> psi_list;
+
+  FixedPositionObserver(const std::string &dir_, const std::vector<long long int> positions_) :
+    dir(dir_), positions(positions_)
+  {}
   
-  double r_min;
-  double r_max;
-  long long int N;
+  void operator()(const State &x, const double t) {
+    for(auto i : positions) {
+      psi_list.push_back(x[i]);
+    }
+    t_list.push_back(t);
+  }
+
+  void save(void) const {
+    write_to_file(psi_list, dir + "psi_list.dat");
+    write_to_file(t_list, dir + "t_list.dat");    
+  }
 };
 
-double i_to_r_ast(const double r_min, const double r_max, const long long int N, const long long int i) {
-  const double h = (r_max - r_min) / (N - 1);
-  return r_min + i * h - h / 2.0;
+
+template<typename... Observers>
+struct ObserverPack {
+  typedef Eigen::ArrayXd State;
+  std::tuple<Observers & ...> observers;
+  
+  ObserverPack(Observers & ... observers_) : observers(observers_...) {}
+
+  void operator()(const State &x, const double t) {
+    std::apply([&](auto &&... args) { ((args(x, t)), ...); }, observers);
+  }
+};
+
+
+int main(int argc, char **argv) {
+  // auto obj = Eigen::ArrayXd::Zero(10);
+  // std::cout << boost::typeindex::type_id_runtime(obj) << '\n';
+
+
+  // constexpr long long int lm_0 = std::get<0>(sqr_rsh_terms[81]);
+  // constexpr long long int l_0 = RSH::idx_to_lm(lm_0).first;
+
+  // std::cout << "lm_0 = " << lm_0 << std::endl
+  // 	    << "l_0 = " << l_0 << std::endl;
+  
+  //const long long int lm_size = sqr_rsh_terms.size();
+  //const long long int grid_size = 10;
+  //Eigen::ArrayXd x = Eigen::ArrayXd::Ones(lm_size * grid_size);
+  
+  //auto expr1 = RSH::quadratic_rsh_expression<8, 40>(x, grid_size);
+  //std::cout << boost::typeindex::type_id_runtime(expr1) << '\n';
+  
+  // std::vector<double> t;
+  // std::vector<Eigen::ArrayXd> f;
+  // auto obs1 = SaveAllObserver<Eigen::ArrayXd>(t, f);
+  // auto obs2 = SaveAllObserver<Eigen::ArrayXd>(t, f);
+
+  Eigen::ArrayXd test = Eigen::ArrayXd::Ones(10);
+  auto obs1 = FixedPositionObserver("", {1});
+  auto obs2 = FixedPositionObserver("", {2});
+  
+  auto obs = ObserverPack(obs1, obs2, obs1, obs2, obs1);
+  std::cout << boost::typeindex::type_id_runtime(obs) << '\n';
+  obs(test, 0);
+
+  std::cout << obs1.t_list.size() << std::endl
+	    << obs2.t_list.size() << std::endl;
+  
+  // run_quadratic_eqn();
+  // run_full_eqn();
+  
+  return 0;
 }
 
-/*! 
-  \brief QNM equation
-*/
-struct QuasiNormalModePDE {
-  typedef Eigen::VectorXd Vector;
-  typedef Vector State;
+
+void run_quadratic_eqn(void) {
+  using namespace Eigen;
+  using namespace boost::numeric::odeint;
+  using namespace std::numbers;
+  using std::array;
+
+  // const std::string dir = "/home/hypermania/Research/BHQuasinormalModes/output/outgoing_wavepacket_flat_2/";
+  const std::string dir = "/home/hypermania/Research/BHQuasinormalModes/output/speed_test/";
+  prepare_directory_for_output(dir);
+
+  const double r0 = 1;
+  const double lambda = 0.1;
+  const double r_min = -400;
+  const double r_max = 600;
+  const long long int N = 1 << 15;
   
-  QuasiNormalModePDEParam param;
-  Vector V;
+  const double r_source = 50;
+  
+  typedef NonlinearScalarPDE Equation;
+  typedef Equation::Param Param;
+  typedef Equation::State State;
 
-  QuasiNormalModePDE(QuasiNormalModePDEParam param_) : param(param_) {
-    using boost::math::lambert_w0;
-    const auto r_min = param.r_min;
-    const auto r_max = param.r_max;
-    const auto N = param.N;
-    const auto r0 = param.r0;
-    const auto s = param.s;
-    const auto l = param.l;
-    
-    V.resize(N+1);
-    for(int i = 0; i < V.size(); ++i) {
-      const double r_ast = i_to_r_ast(r_min, r_max, N, i);
-      const double r = r0 * (1.0 + lambert_w0(exp(r_ast / r0 - 1.0) / r0));
-      const double V_r = (1 - r0 / r) * (l*(l+1) / (r*r) + r0 * (1 - s*s) / (r*r*r));
-      V[i] = V_r;
-    }
+  Param param;
+  param.r0 = r0;
+  param.lambda = lambda;
+  param.r_min = r_min;
+  param.r_max = r_max;
+  param.N = N;
+  param.t_start = 0;
+  param.t_end = 20; //r_max - r_source;
+  param.t_interval = 0.5;
+  param.delta_t = 0.01;
+
+  save_param_for_Mathematica(param, dir);
+  
+  // The equation object.
+  Equation eqn(param);
+
+  // Save constant intervals
+  // ConstIntervalObserver observer(dir, param);
+  auto observer = [](const State &x, double t){};
+
+  // auto stepper = runge_kutta4_classic<State, double, State, double>();
+  // auto stepper = adams_bashforth<5, State, double, State, double>();
+  // auto stepper = adams_bashforth_moulton<5, State, double, State, double>();
+  auto stepper = make_controlled(1e-15, 1e-15, runge_kutta_fehlberg78<State, double, State, double>());
+  
+
+  VectorXd state(4 * (N+1));
+  state.array() = 0;
+  const double sigma = 0.5;
+  for(int i = 0; i < N+1; ++i) {
+    const double r_ast = i_to_r_ast(r_min, r_max, N, i);
+    // Out-going wavepacket
+    state(i) = pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
+    state(2*(N+1)+i) = pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
   }
 
-  /*!
-    \brief The function called by odeint library.
-    \param[in] x The current state of the system.
-    \param[out] dxdt The time derivative, dxdt of the system.
-    \param t The current time parameter.
-  */
-  void operator()(const State &x, State &dxdt, const double t) {
-    using namespace Eigen;
-    const auto N = param.N;
-    const double h = (param.r_max - param.r_min) / (N - 1);
-    dxdt.head(N+1) = x.tail(N+1);
-    dxdt(seqN(N+1+1,N-1)) = (x(seqN(0,N-1)) + x(seqN(2,N-1)) - 2 * x(seqN(1,N-1))) / (h*h) - (V(seqN(1,N-1)).array() * x(seqN(1,N-1)).array()).matrix();
-    dxdt(N+1) = 2 * (x(N+1+1) - x(N+1)) / h - (x(0) + x(2) - 2 * x(1)) / (h*h) - V(0) * x(0);
-    dxdt(2*N+1) = -2 * (x(2*N+1) - x(2*N)) / h - (x(N) + x(N-2) - 2 * x(N-1)) / (h*h) - V(N) * x(N);
-  }
-};
+  // Solve the equation.
+  run_and_measure_time("Solving equation",
+  		       [&](){
+			 // int num_steps = integrate_const(stepper, eqn, state, t_start, t_end, delta_t, observer);
+			 int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, param.t_start, param.t_end, param.delta_t, std::ref(observer));
+			 std::cout << "total number of steps = " << num_steps << '\n';
+		       } );
+  
+  // write_to_file(observer.t_list, dir + "t_list.dat");
+}
 
 
-int main(int argc, char **argv){
+void run_linear_eqn(void){
+
+  
   using namespace Eigen;
   using namespace boost::numeric::odeint;
   using boost::math::lambert_w0;
+  using namespace std::numbers;
 
-  const std::string dir = "output/initial_test/";
+  // const std::string dir = "output/initial_test/";
+  const std::string dir = "/home/hypermania/Research/BHQuasinormalModes/output/single_idx_test/";
   prepare_directory_for_output(dir);
 
   const long long int s = 2;
   const long long int l = 2;
   const double r0 = 1;
   
-  const double r_min = -100;
-  const double r_max = 100;
-  const long long int N = 1 << 12;
+  const double r_min = -1000;
+  const double r_max = 1000;
+  const long long int N = 1 << 15;
   
   typedef QuasiNormalModePDE Equation;
   typedef QuasiNormalModePDEParam Param;
@@ -122,6 +210,8 @@ int main(int argc, char **argv){
   param.s = s;
   param.l = l;
   param.r0 = r0;
+
+  save_param_for_Mathematica(param, dir);
   
   // The equation object.
   Equation eqn(param);
@@ -130,179 +220,144 @@ int main(int argc, char **argv){
   // Here we save the field spectrum, density spectrum, and 2D density slices.
   std::vector<double> t_list;
   std::vector<State> x_list;
-  SaveAllObserver<State> observer(t_list, x_list);
+  
+  // SaveAllObserver<State> observer(t_list, x_list);
+  const long long int rIdx = r_ast_to_i(r_min, r_max, N, 50.0);
+  std::cout << "using rIdx = " << rIdx << std::endl;
+  std::vector<double> psi_list;
+  std::vector<double> dt_psi_list;
+  auto observer = [&](const State &x, double t)->void{
+    psi_list.push_back(x[rIdx]);
+    dt_psi_list.push_back(x[(N+1) + rIdx]);
+    t_list.push_back(t);
+  };
 
   
   // Choose the numerical integrator.
   // Here we use RK4, you can also use other methods.
   // See https://www.boost.org/doc/libs/1_85_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/getting_started/overview.html .
-  auto stepper = runge_kutta4_classic<State, double, State, double>();
-  // auto stepper = make_controlled(1e-9, 1e-9, runge_kutta_fehlberg78<State, double, State, double>());
-  
+  // auto stepper = runge_kutta4_classic<State, double, State, double>();
+  auto stepper = make_controlled(1e-20, 1e-20, runge_kutta_fehlberg78<State, double, State, double>());
+
+  const double r_source = 50.;
   VectorXd state(2 * (N+1));
   state.array() = 0;
   for(int i = 0; i < N+1; ++i) {
     const double r_ast = i_to_r_ast(r_min, r_max, N, i);
-    state(i) = exp(-2.*(r_ast - 50.)*(r_ast - 50.));
+    state(i) = pow(pi, -0.5) * exp(-(r_ast - r_source)*(r_ast - r_source));
   }
 
   const double t_start = 0;
-  const double t_end = 160;
-  const double delta_t = 0.01;
+  const double t_end = 2 * (r_max - r_source); //1000; // t < 2 * (r_max-r_source)
+  const double delta_t = 0.001;
   
   // Solve the equation.
   run_and_measure_time("Solving equation",
   		       [&](){
-			 int num_steps = integrate_const(stepper, eqn, state, t_start, t_end, delta_t, observer);
+			 // int num_steps = integrate_const(stepper, eqn, state, t_start, t_end, delta_t, observer);
+			 int num_steps = integrate_adaptive(stepper, eqn, state, t_start, t_end, delta_t, observer);
 			 std::cout << "total number of steps = " << num_steps << '\n';
 		       } );
   
-  write_vector_to_file(t_list, dir + "t_list.dat");
-  // write_vector_to_file(x_list, dir + "t_list.dat");
-  for(int i = 0; i < x_list.size(); ++i) {
-    write_VectorXd_to_filename_template(x_list[i], dir + "state_%d.dat", i);
-  }
-  // State &last = x_list.back();
-  // write_data_to_file((const char *)last.data(), last.size() * sizeof(double), dir + "last.dat");
-  save_param_for_Mathematica(param, dir);
-
-    // VectorXd V(N+1);
-  // for(int i = 0; i < V.size(); ++i) {
-  //   const double r_ast = i_to_r_ast(r_min, r_max, N, i);
-  //   const double r = r0 * (1.0 + lambert_w0(exp(r_ast / r0 - 1.0) / r0));
-  //   const double V_r = (1 - r0 / r) * (l*(l+1) / (r*r) + r0 * (1 - s*s) / (r*r*r));
-  //   V[i] = V_r;
+  write_to_file(t_list, dir + "t_list.dat");
+  // for(int i = 0; i < x_list.size(); ++i) {
+  //   write_VectorXd_to_filename_template(x_list[i], dir + "state_%d.dat", i);
   // }
-
-  // for(int i = 0; i < V.size(); ++i) {
-  //   std::cout << i_to_r_ast(r_min, r_max, N, i) << ", " << V[i] << '\n';
-  // }
+  write_to_file(psi_list, dir + "psi_list.dat");
+  write_to_file(dt_psi_list, dir + "dt_psi_list.dat");
   
-  // for(int i = 0; i < 10; ++i) {
-  //   const double lambert_arg = i;
-  //   const double lambert_val = lambert_w0(lambert_arg);
-  //   std::cout << lambert_val << '\n';
-  // }
-
 }  
 
 
 
-/*
-void solve_field_equation(void)
-{
+
+void run_full_eqn(void) {
   using namespace Eigen;
   using namespace boost::numeric::odeint;
-
-  
-  // Set the PRNG seed.
-  RandomNormal::set_generator_seed(0);
-
-  
-  // Set the directory for output.
-  const std::string dir = "output/Growth_and_FS/";
+  using namespace std::numbers;
+  using std::array;
+    
+  // const std::string dir = "/home/hypermania/Research/BHQuasinormalModes/output/animation_test_14/";
+  const std::string dir = "/home/hypermania/Dropbox/Research/BHQuasinormalModes/QuasiNormalModes/output/quadratic_rsh_coupling_0001/";
   prepare_directory_for_output(dir);
 
+  const double r0 = 1;
+  const long long int l_max = 0;
+  const double lambda = 0.001;
+  const double r_min = -400;
+  const double r_max = 600;
+  const long long int N = 1 << 15;
   
-  // Set parameters for the simulation.
-  MyParam param
-    {
-     .N = 384, // Lattice points per axis
-     .L = 384 * 0.8, // Size of the box
-     // ULDM params
-     .m = 1.0, // Mass of scalar field
-     .lambda = 0, // Lambda phi^4 coupling strength
-     //.f_a = 30.0, // Not relevant for ComovingCurvatureEquationInFRW
-     .k_ast = 1.0, // Characteristic momentum
-     .k_Psi = 1.0, // Not relevant for ComovingCurvatureEquationInFRW
-     .varphi_std_dev = 1.0, // Standard deviation of field
-     .Psi_std_dev = 0.02, // Standard deviation of metric perturbation Psi
-     // FRW metric params
-     .a1 = 1.0,
-     .H1 = 0.05,
-     .t1 = 1.0 / (2 * param.H1),
-     // Start and end time for numerical integration, and time interval between saves
-     .t_start = param.t1,
-     .t_end = param.t_start + (pow(3.5 / param.a1, 2) - 1.0) / (2 * param.H1),
-     .t_interval = 49.99, // Save a snapshot every t_interval
-     // Numerical method parameter
-     .delta_t = 0.5, // Time step for numerical integration
-     // Psi approximation parameter
-     .M = 128 // Lattice points for storing / computing Psi
-    };
-  print_param(param);
+  const double r_source = 50;
+  
+  typedef CubicScalarPDE<l_max> Equation;
+  typedef Equation::Param Param;
+  typedef Equation::State State;
+  
+  Param param;
+  param.r0 = r0;
+  param.l_max = l_max;
+  param.lambda = lambda;
+  param.r_min = r_min;
+  param.r_max = r_max;
+  param.N = N;
+  param.t_start = 0;
+  param.t_end = 800; //r_max - r_source;
+  param.t_interval = 0.5;
+  param.delta_t = 0.001;
+
   save_param_for_Mathematica(param, dir);
-
-  
-  // Choose an equation to solve.
-  // Here we solve a scalar field equation with background metric perturbations.
-  // Also see CudaApproximateComovingCurvatureEquationInFRW, which is a CUDA implementation of the same equation.
-  typedef ComovingCurvatureEquationInFRW Equation;
-  //typedef CudaApproximateComovingCurvatureEquationInFRW Equation;
-  typedef typename Equation::Workspace Workspace;
-  typedef typename Equation::State State;
-
-  
-  // Initialize the workspace given params and a procedure for setting initial conditions.
-  // The initialization procedure is described in Sec.3 of the paper.
-  Workspace workspace(param, perturbed_grf_and_comoving_curvature_fft);
-
   
   // The equation object.
-  Equation eqn(workspace);
-
-  
-  // Choose what to save in the course of simulation.
-  // Here we save the field spectrum, density spectrum, and 2D density slices.
-  ConstIntervalObserver<Equation, true, true, true> observer(dir, param, eqn);
-
+  Equation eqn(param);
   
   // Choose the numerical integrator.
-  // Here we use RK4, you can also use other methods.
-  // See https://www.boost.org/doc/libs/1_85_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/getting_started/overview.html .
-  auto stepper = runge_kutta4_classic<State, double, State, double>();
-  // auto stepper = make_controlled(1e-9, 1e-9, runge_kutta_fehlberg78<State, double, State, double>());
+  auto stepper = make_controlled(1e-15, 1e-15, runge_kutta_fehlberg78<State, double, State, double>());
+
+  const long long int rIdx = r_ast_to_i(r_min, r_max, N, 50.0);
+  std::cout << "using rIdx = " << rIdx << std::endl;
+  std::vector<long long int> positions;
+  for(int i = 0; i < 2 * eqn.lm_size; ++i) {
+    positions.push_back(eqn.grid_size * i + rIdx);
+  }
+  auto observer = FixedPositionObserver(dir, positions);
+
+  /*
+  std::vector<double> t_list;
+  std::vector<double> psi_list;
+  auto observer = [&](const State &x, double t)->void{
+    for(int i = 0; i < eqn.lm_size * 2; ++i) {
+      psi_list.push_back(x[eqn.grid_size * i + rIdx]);
+    }
+    t_list.push_back(t);
+  };
+  */
 
   
-  {
-    // Save spectrum for R and initial potential Psi
-    double eta_i = workspace.cosmology.eta(param.t_start);
-    auto kernel = [eta_i](double k){
-		    return k == 0.0 ? 0.0 : (6 * sqrt(3) * (-((k * eta_i * cos((k * eta_i) / sqrt(3))) / sqrt(3)) + sin((k * eta_i) / sqrt(3)))) / (pow(k, 3) * pow(eta_i, 3));
-		  };
-    
-    Eigen::VectorXd R_fft_eigen(workspace.R_fft.size());
-    copy_vector(R_fft_eigen, workspace.R_fft);
-    
-    auto fft_wrapper = fftwWrapper(param.N);
-    Eigen::VectorXd R = fft_wrapper.execute_z2d(R_fft_eigen) / pow(param.N, 3);
-    Eigen::VectorXd Psi = compute_field_with_scaled_fourier_modes(param.N, param.L, R, kernel, fft_wrapper);
-
-    std::cout << "Psi_std_dev = " << sqrt(Psi.squaredNorm() / pow(param.N, 3)) << '\n';
-    auto Psi_spectrum = compute_power_spectrum(param.N, Psi, fft_wrapper);
-    write_VectorXd_to_file(Psi_spectrum, dir + "initial_Psi_spectrum.dat");
-    
-    auto R_spectrum = compute_power_spectrum(param.N, R, fft_wrapper);
-    write_VectorXd_to_file(R_spectrum, dir + "initial_R_spectrum.dat");
+  // Initialize out-going wavepacket  
+  State state(eqn.state_size);
+  state = 0;
+  
+  ArrayXd r_ast(eqn.grid_size);
+  for(int i = 0; i < eqn.grid_size; ++i) {
+    r_ast[i] = i_to_r_ast(r_min, r_max, N, i);
   }
 
+  const double sigma = 0.5;
+  const long long int grid_begin = RSH::lm_to_idx(1, 1) * eqn.grid_size;
+  state(seqN(grid_begin, eqn.grid_size)) = pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
+  state(seqN(eqn.half_state_size + grid_begin, eqn.grid_size)) = pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
   
   // Solve the equation.
   run_and_measure_time("Solving equation",
   		       [&](){
-			 int num_steps = integrate_const(stepper, eqn, workspace.state, param.t_start, param.t_end, param.delta_t, observer);
+			 // int num_steps = integrate_const(stepper, eqn, state, t_start, t_end, delta_t, observer);
+			 int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, param.t_start, param.t_end, param.delta_t, std::ref(observer));
 			 std::cout << "total number of steps = " << num_steps << '\n';
 		       } );
-  
-  write_vector_to_file(workspace.t_list, dir + "t_list.dat");
-  
-  
-  // Optional: save the final state.
-  {
-    Eigen::VectorXd state_out(workspace.state.size());
-    copy_vector(state_out, workspace.state);
-    write_VectorXd_to_file(state_out, dir + "state.dat");
-  }
-}
+  write_to_file(state, dir + "final_state.dat");
+  // write_to_file(psi_list, dir + "psi_list.dat");
+  // write_to_file(t_list, dir + "t_list.dat");
+  observer.save();
 
-*/
+}
