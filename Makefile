@@ -6,48 +6,6 @@
 # Host compiler choice (needs support for C++20)
 HOST_COMPILER ?= g++
 
-##################################################################
-# Include path & library path for FFTW
-
-# Directory for fftw3.h
-FFTW_INCLUDE_DIR := "/usr/local/include/"
-#FFTW_INCLUDE_DIR := "/opt/homebrew/Cellar/fftw/3.3.10_1/include/"
-
-# Directory for libfftw3.a
-FFTW_LIBRARY_DIR := "/usr/local/lib/"
-#FFTW_LIBRARY_DIR := "/opt/homebrew/lib/"
-
-##################################################################
-# CUDA related settings
-
-# Set if CUDA should be disabled or not (CUDA is enabled by default)
-# You can also disable cuda by calling "make disable-cuda=true"
-disable-cuda := true
-
-# Location of the CUDA Toolkit
-CUDA_PATH ?= /usr/local/cuda
-# CUDA include path
-CUDA_INCLUDE_DIR := "/usr/local/cuda/include/"
-# CUDA library path
-CUDA_LIBRARY_DIR := "/usr/local/cuda/lib64"
-
-# Command for NVCC
-NVCC := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
-NVCCFLAGS   := -m64 --threads 2
-
-# Gencode arguments
-# Use 86 for RTX 3060 Ti. Change this for other GPUs / CUDA Toolkit version.
-SMS ?= 86 # 50 52 60 61 70 75 80 86
-
-ifeq ($(SMS),)
-	$(info >>> WARNING - no SM architectures have been specified - waiving sample <<<)
-	SAMPLE_ENABLED := 0
-endif
-
-ifeq ($(GENCODE_FLAGS),)
-# Generate SASS code for each SM architecture listed in $(SMS)
-$(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
-endif
 
 ##################################################################
 ##################################################################
@@ -66,27 +24,11 @@ program_CXX_OBJS := ${program_CXX_SRCS:.cpp=.o}
 program_CXX_ASMS := ${program_CXX_SRCS:.cpp=.s}
 
 program_OBJS := $(program_C_OBJS) $(program_CXX_OBJS)
-program_INCLUDE_DIRS := "/home/hypermania/Research/FreeStreamingULDM/Cosmic-Fields-Lite/external/"
+program_INCLUDE_DIRS := "external"
 program_LIBRARY_DIRS :=
 program_LIBRARIES := fftw3 m dl quadmath
 
 
-# Names for CUDA C++ files
-program_CU_SRCS := $(wildcard $(src_DIR)/*.cu) $(wildcard $(src_DIR)/*/*.cu)
-program_CUH_SRCS := $(wildcard $(src_DIR)/*.cuh) $(wildcard $(src_DIR)/*/*.cuh)
-program_CU_OBJS := ${program_CU_SRCS:.cu=.o}
-device_link_OBJ := $(src_DIR)/device_link.o
-
-
-# Option to disable CUDA
-ifeq ($(disable-cuda),false)
-	program_INCLUDE_DIRS += $(CUDA_INCLUDE_DIR)
-	program_LIBRARY_DIRS += $(CUDA_LIBRARY_DIR)
-	program_LIBRARIES += cudart cufft_static culibos
-	program_OBJS += $(program_CU_OBJS) $(device_link_OBJ)
-else
-	CXXFLAGS += -D DISABLE_CUDA
-endif
 
 
 # Compiler flags
