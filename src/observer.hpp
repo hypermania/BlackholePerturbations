@@ -72,5 +72,91 @@ struct ConstIntervalObserver {
 };
 
 
+struct FixedPositionObserver {
+  // typedef Eigen::ArrayXd State;
+  std::string dir;
+  std::vector<long long int> positions;
+  std::vector<double> t_list;
+  std::vector<double> psi_list;
+
+  FixedPositionObserver(const std::string &dir_, const std::vector<long long int> positions_) :
+    dir(dir_), positions(positions_)
+  {}
+  
+  // void operator()(const State &x, const double t) {
+  //   for(auto i : positions) {
+  //     psi_list.push_back(x[i]);
+  //   }
+  //   t_list.push_back(t);
+  // }
+
+  template<typename State, typename Scalar>
+  void operator()(const State &x, const Scalar t) {
+    for(auto i : positions) {
+      psi_list.push_back(static_cast<double>(x[i]));
+    }
+    t_list.push_back(static_cast<double>(t));
+  }
+  
+  void save(void) const {
+    write_to_file(psi_list, dir + "psi_list.dat");
+    write_to_file(t_list, dir + "t_list.dat");    
+  }
+};
+
+
+struct ApproximateTimeObserver {
+  // typedef Eigen::ArrayXd State;
+  std::string dir;
+  std::vector<double> times;
+  std::vector<double> t_list;
+  long long int current_idx;
+
+  ApproximateTimeObserver(const std::string &dir_, const std::vector<double> times_) :
+    dir(dir_), times(times_), current_idx(0)
+  {}
+
+  // void operator()(const State &x, const double t) {
+  //   if(current_idx < times.size() && t >= times[current_idx]) {
+  //     write_to_filename_template(x, dir + "state_%d.dat", current_idx);
+  //     ++current_idx;
+  //     t_list.push_back(t);
+  //   }
+  // }
+
+  template<typename State, typename Scalar>
+  void operator()(const State &x, const Scalar t) {
+    if(current_idx < times.size() && t >= times[current_idx]) {
+      Eigen::ArrayXd x_temp = x.template cast<double>();
+      write_to_filename_template(x_temp, dir + "state_%d.dat", current_idx);
+      ++current_idx;
+      t_list.push_back(static_cast<double>(t));
+    }
+  }
+
+  void save(void) const {
+    write_to_file(t_list, dir + "t_list_snapshots.dat");
+  }
+};
+
+
+template<typename... Observers>
+struct ObserverPack {
+  //typedef Eigen::ArrayXd State;
+  std::tuple<Observers & ...> observers;
+  
+  ObserverPack(Observers & ... observers_) : observers(observers_...) {}
+
+  template<typename State, typename Scalar>
+  //void operator()(const State &x, const double t) {
+  void operator()(const State &x, const Scalar t) {
+    std::apply([&](auto &&... args) { ((args(x, t)), ...); }, observers);
+  }
+
+  void save(void) const {
+    std::apply([&](auto &&... args) { ((args.save()), ...); }, observers);
+  }
+};
+
 
 #endif

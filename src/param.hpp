@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <boost/multiprecision/float128.hpp>
 
 
 struct SampleParam {
@@ -85,11 +86,10 @@ constexpr static std::string get_Mathematica_format(long long int) {
 */
 
 namespace {
-template<typename T> std::string_view Mathematica_format;
-
-template<> constexpr std::string_view Mathematica_format<double> = "Real64";
-
-template<> constexpr std::string_view Mathematica_format<long long int> = "Integer64";
+  template<typename T> std::string_view Mathematica_format;
+  template<> constexpr std::string_view Mathematica_format<double> = "Real64";
+  template<> constexpr std::string_view Mathematica_format<boost::multiprecision::float128> = "Real128";
+  template<> constexpr std::string_view Mathematica_format<long long int> = "Integer64";
 }
 
 template<typename T>
@@ -113,10 +113,29 @@ static void save_param(const T &param, const std::string &filename){
 
 
 template<typename T>
+void save_param_offsets(const std::string &filename) {
+  std::vector<size_t> offsets;
+  T t;
+  T *t_ptr = &t;
+  auto func = [&](const auto &field) {
+    auto *field_ptr = &field;
+    offsets.push_back(reinterpret_cast<size_t>(field_ptr) - reinterpret_cast<size_t>(t_ptr));
+  };
+  boost::pfr::for_each_field(t, func);
+  
+  std::ofstream outstream(filename);  
+  for(auto offset : offsets) {
+    outstream << offset << '\n';
+  }
+}
+
+
+template<typename T>
 void save_param_for_Mathematica(const T &param, const std::string &dir) {
   save_param_names<T>(dir + "paramNames.txt");
   save_param_Mathematica_formats<T>(dir + "paramTypes.txt");
   save_param<T>(param, dir + "param.dat");
+  save_param_offsets<T>(dir + "paramOffsets.txt");
 }
 
 
@@ -128,6 +147,8 @@ void save_param_types(const std::string &filename) {
 	      };
   boost::pfr::for_each_field(T(), func);
 }
+
+
 
 
 

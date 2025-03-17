@@ -1,2 +1,2 @@
-# QuasiNormalModes
-Numerical tools for understanding blackhole quasinormal modes
+# BlackholePerturbations
+Numerical tools for understanding blackhole perturbations
