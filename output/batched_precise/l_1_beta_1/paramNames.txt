@@ -1,0 +1,10 @@
+s
+l
+r0
+r_min
+r_max
+N
+t_start
+t_end
+t_interval
+delta_t
