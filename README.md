@@ -9,7 +9,7 @@ These equations were used to produce the numerical results in paper [arXiv:XXXX.
 ## Plotting
 Some data are already included in the codebase under `/output`. Run the `plot.nb` Mathematica notebook to plot these data. New data can be generated from the code.
 
-## Running the code
+## Functionalities
 The `src/main.cpp` file has two functions:
 
 1. `run_sourced_eqn()` sets up parameters for the sourced RW equation, and run them in parallel. See section 2.3 of [arXiv:XXXX.XXXXX](https://arxiv.org) for details.
