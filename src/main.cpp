@@ -1,5 +1,6 @@
 #include <vector>
 #include <algorithm>
+#include <functional>
 #include <typeinfo>
 #include <thread>
 
@@ -28,10 +29,10 @@ void run_coupled_eqn(void);
 void solve_rast(void);
 
 
-int main(int argc, char **argv) {  
+int main(int argc, char **argv) {
   // run_coupled_eqn();
-  //run_sourced_eqn();
-  solve_rast();
+  // run_sourced_eqn();
+  // solve_rast();
   return 0;
 }
 
@@ -332,4 +333,20 @@ void solve_rast(void) {
   
   // std::cout << std::setprecision(100);
   // std::cout << "solution for r_ast = -100 is " << result << std::endl;
+  
+  // {
+  //   typedef Eigen::Array<HighPrecisionScalar, -1, 1> Vector;
+  //   const HighPrecisionScalar M = HighPrecisionScalar("1.0");
+  //   const HighPrecisionScalar a = HighPrecisionScalar("0.5");
+  //   // const std::complex<HighPrecisionScalar> ii(HighPrecisionScalar("0"), HighPrecisionScalar("1"));
+  //   const long long int grid_size = 10;
+  //   auto expr = atan((a)*((pow((pow(r(seqN((2),((-4)+(grid_size)))),4))+((pow(a,2))*((r(seqN((2),((-4)+(grid_size)))))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))),-1))*((sqrt(r(seqN((2),((-4)+(grid_size))))))*((sqrt((pow(a,2))+((r(seqN((2),((-4)+(grid_size)))))*(((-2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))*(sqrt((pow(r(seqN((2),((-4)+(grid_size)))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))))));
+
+  //   Vector expr_1 = sqrt((pow(a,2))+((r(seqN((0),(grid_size))))*(((-2)*(M))+(r(seqN((0),(grid_size)))))));
+  //   Vector expr_2 = sqrt((pow(r(seqN((0),(grid_size))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((0),(grid_size)))))));
+  //   Vector expr_3 = sqrt(r(seqN((0),(grid_size))));
+  //   Vector expr_4 = atan((a)*((expr_1)*((expr_2)*((expr_3)*(pow((pow(r(seqN((0),(grid_size))),4))+((pow(a,2))*((r(seqN((0),(grid_size))))*(((2)*(M))+(r(seqN((0),(grid_size))))))),-1))))));
+
+  // }
+
 }
