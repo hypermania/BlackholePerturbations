@@ -19,6 +19,7 @@ program_C_SRCS := $(wildcard $(src_DIR)/*.c)
 program_CXX_SRCS := $(wildcard $(src_DIR)/*.cpp)
 program_H_SRCS := $(wildcard $(src_DIR)/*.h)
 program_HPP_SRCS := $(wildcard $(src_DIR)/*.hpp)
+program_GEN_SRCS := $(wildcard $(src_DIR)/*.gen)
 program_C_OBJS := ${program_C_SRCS:.c=.o}
 program_CXX_OBJS := ${program_CXX_SRCS:.cpp=.o}
 program_CXX_ASMS := ${program_CXX_SRCS:.cpp=.s}
@@ -58,7 +59,7 @@ all: $(program_NAME)
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)
 
-$(program_OBJS): $(program_H_SRCS) $(program_HPP_SRCS) $(program_CUH_SRCS)
+$(program_OBJS): $(program_H_SRCS) $(program_HPP_SRCS) $(program_CUH_SRCS) $(program_GEN_SRCS)
 
 %.o: %.cu
 	$(NVCC) $(NVCC_INCLUDE_DIR_FLAGS) $(NVCCFLAGS) $(GENCODE_FLAGS) $(NVCC_OPTIMIZE_FLAGS) --diag-suppress 20012,20014 -o $@ -dc $<
