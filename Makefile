@@ -50,10 +50,10 @@ endif
 program_NAME := main
 src_DIR := src
 program_C_SRCS := $(wildcard $(src_DIR)/*.c)
-program_CXX_SRCS := $(wildcard $(src_DIR)/*.cpp)
+program_CXX_SRCS := $(wildcard $(src_DIR)/*.cpp) $(wildcard $(src_DIR)/**/*.cpp)
 program_H_SRCS := $(wildcard $(src_DIR)/*.h)
 program_HPP_SRCS := $(wildcard $(src_DIR)/*.hpp)
-program_GENERATED_SRCS := $(wildcard $(src_DIR)/*.gen)
+program_GEN_SRCS := $(wildcard $(src_DIR)/*.gen)
 program_C_OBJS := ${program_C_SRCS:.c=.o}
 program_CXX_OBJS := ${program_CXX_SRCS:.cpp=.o}
 program_CXX_ASMS := ${program_CXX_SRCS:.cpp=.s}
@@ -61,7 +61,7 @@ program_CXX_ASMS := ${program_CXX_SRCS:.cpp=.s}
 program_OBJS := $(program_C_OBJS) $(program_CXX_OBJS)
 program_INCLUDE_DIRS := "external"
 program_LIBRARY_DIRS :=
-program_LIBRARIES := fftw3 m dl quadmath
+program_LIBRARIES := m dl quadmath # fftw3 
 
 
 # Names for CUDA C++ files
@@ -86,6 +86,7 @@ endif
 # Compiler flags
 CXXFLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
 CXXFLAGS += -std=gnu++20 -Wall -DEIGEN_NO_CUDA -ftemplate-depth=20000 #-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
+#CXXFLAGS += -march=alderlake -pthread
 CXXFLAGS += -march=native -pthread
 CXXFLAGS += -O3 -ffast-math
 #CXXFLAGS += -g -fno-omit-frame-pointer -fext-numeric-literals
@@ -109,7 +110,7 @@ all: $(program_NAME)
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)
 
-$(program_OBJS): $(program_H_SRCS) $(program_HPP_SRCS) $(program_CUH_SRCS)
+$(program_OBJS): $(program_H_SRCS) $(program_HPP_SRCS) $(program_CUH_SRCS) $(program_GEN_SRCS)
 
 %.o: %.cpp %.gen
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
