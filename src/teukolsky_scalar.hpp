@@ -85,6 +85,8 @@ struct TeukolskyScalarPDE {
 
   static std::pair<long long int, long long int> idx_to_lm(const long long int idx);
 
+  void compute_derivatives(const State &x, ComplexVector &dr_psi_lm, ComplexVector &drdr_psi_lm) const;
+
 };
 
 

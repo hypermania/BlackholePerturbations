@@ -110,7 +110,7 @@ struct ApproximateTimeObserver {
   std::string dir;
   std::vector<double> times;
   std::vector<double> t_list;
-  long long int current_idx;
+  size_t current_idx;
 
   ApproximateTimeObserver(const std::string &dir_, const std::vector<double> times_) :
     dir(dir_), times(times_), current_idx(0)
@@ -125,7 +125,7 @@ struct ApproximateTimeObserver {
   // }
 
   template<typename State, typename Scalar>
-  void operator()(const State &x, const Scalar t) {
+  inline void operator()(const State &x, const Scalar t) {
     if(current_idx < times.size() && t >= times[current_idx]) {
       Eigen::ArrayXd x_temp = x.template cast<double>();
       write_to_filename_template(x_temp, dir + "state_%d.dat", current_idx);
@@ -133,11 +133,22 @@ struct ApproximateTimeObserver {
       t_list.push_back(static_cast<double>(t));
     }
   }
-
+  
   void save(void) const {
     write_to_file(t_list, dir + "t_list_snapshots.dat");
   }
 };
+
+template<>
+inline void ApproximateTimeObserver::operator()<Eigen::ArrayXcd, double>(const Eigen::ArrayXcd &x, const double t) {
+  if(current_idx < times.size() && t >= times[current_idx]) {
+    //if constexpr(std::is_same_v<Eigen::internal::traits<State>::Scalar, std::complex<double>>){
+    Eigen::ArrayXcd x_temp = x;
+    write_to_filename_template(x_temp, dir + "state_%d.dat", current_idx);
+    ++current_idx;
+    t_list.push_back(static_cast<double>(t));
+  }
+}
 
 
 template<typename... Observers>
