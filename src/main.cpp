@@ -23,6 +23,7 @@
 #include "boost/type_index.hpp"
 
 #include "teukolsky_scalar.hpp"
+#include "teukolsky_scalar_cuda.cuh"
 
 #include "examples.hpp"
 #include "rsh.hpp"
@@ -32,8 +33,28 @@ void run_teukoksky_benchmark(void);
 void test_cuda_graph(void);
 
 int main(int argc, char **argv) {
+  typedef CudaTeukolskyScalarPDE Equation;
+  typedef Equation::Param Param;
+  typedef Equation::State State;
   
-  test_cuda_graph();
+  Param param;
+  param.s = 0;
+  param.l_max = 3;
+  param.M = 0.5;
+  param.a = 0.49;
+
+  param.rast_min = -50;
+  param.rast_max = 75;
+  param.N = static_cast<long long int>((param.rast_max - param.rast_min) / 0.03); //1000;
+  
+  param.t_start = 0;
+  param.t_end = 50;
+  param.t_interval = 0.5;
+  param.delta_t = 0.01;
+
+  Equation eqn(param);
+  
+  //test_cuda_graph();
   
   //run_coupled_eqn();
   //run_sourced_eqn();
@@ -73,6 +94,8 @@ void run_teukoksky(void) {
   save_param_for_Mathematica(param, dir);
 
   Equation eqn(param);
+
+  std::cout << "point 0" << std::endl;
 
   // {
   //   for(auto [lm1, idx1] : eqn.drdr_psi_lm_map[3]){
@@ -208,99 +231,99 @@ void run_teukoksky_benchmark(void) {
 
 }
 
-void solve_rast(void) {
-  using namespace Eigen;
-  using boost::multiprecision::cpp_bin_float_100;
-  using boost::math::lambert_w0;
-  typedef boost::multiprecision::cpp_bin_float_100 HighPrecisionScalar;
+// void solve_rast(void) {
+//   using namespace Eigen;
+//   using boost::multiprecision::cpp_bin_float_100;
+//   using boost::math::lambert_w0;
+//   typedef boost::multiprecision::cpp_bin_float_100 HighPrecisionScalar;
 
-  typedef double Scalar;
-  typedef Eigen::Array<Scalar, -1, 1> Vector;
-  typedef Vector State;
+//   typedef double Scalar;
+//   typedef Eigen::Array<Scalar, -1, 1> Vector;
+//   typedef Vector State;
   
-  const long long int N = 10000;
-  const double rast_min = -10;
-  const double rast_max = 10;
-  const double M = 0.5;
-  const double a = 0.1;
-  HighPrecisionScalar rast_min_hp = static_cast<HighPrecisionScalar>(rast_min);
-  HighPrecisionScalar rast_max_hp = static_cast<HighPrecisionScalar>(rast_max);
-  HighPrecisionScalar M_hp = static_cast<HighPrecisionScalar>(M);
-  HighPrecisionScalar a_hp = static_cast<HighPrecisionScalar>(a);
-  HighPrecisionScalar r_minus_hp = M_hp - sqrt(pow(M_hp, 2) - pow(a_hp, 2));
-  HighPrecisionScalar r_plus_hp = M_hp + sqrt(pow(M_hp, 2) - pow(a_hp, 2));
-  HighPrecisionScalar h_hp = (rast_max_hp - rast_min_hp) / (N - 1);
-  Vector r(N + 1);
-  Vector r_ast(N + 1);
+//   const long long int N = 10000;
+//   const double rast_min = -10;
+//   const double rast_max = 10;
+//   const double M = 0.5;
+//   const double a = 0.1;
+//   HighPrecisionScalar rast_min_hp = static_cast<HighPrecisionScalar>(rast_min);
+//   HighPrecisionScalar rast_max_hp = static_cast<HighPrecisionScalar>(rast_max);
+//   HighPrecisionScalar M_hp = static_cast<HighPrecisionScalar>(M);
+//   HighPrecisionScalar a_hp = static_cast<HighPrecisionScalar>(a);
+//   HighPrecisionScalar r_minus_hp = M_hp - sqrt(pow(M_hp, 2) - pow(a_hp, 2));
+//   HighPrecisionScalar r_plus_hp = M_hp + sqrt(pow(M_hp, 2) - pow(a_hp, 2));
+//   HighPrecisionScalar h_hp = (rast_max_hp - rast_min_hp) / (N - 1);
+//   Vector r(N + 1);
+//   Vector r_ast(N + 1);
 
-  for(long long int i = 0; i < N + 1; ++i) {
-    const HighPrecisionScalar r_ast_hp = rast_min_hp + i * h_hp - h_hp / HighPrecisionScalar(2);
+//   for(long long int i = 0; i < N + 1; ++i) {
+//     const HighPrecisionScalar r_ast_hp = rast_min_hp + i * h_hp - h_hp / HighPrecisionScalar(2);
 
-    auto r_to_rast =
-      [&](HighPrecisionScalar r_hp) -> HighPrecisionScalar {
-	return -r_ast_hp + r_hp
-	  + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
-	  - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp);
-      };
+//     auto r_to_rast =
+//       [&](HighPrecisionScalar r_hp) -> HighPrecisionScalar {
+// 	return -r_ast_hp + r_hp
+// 	  + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
+// 	  - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp);
+//       };
 
-    std::uintmax_t it = 1000;
-    boost::math::tools::eps_tolerance<HighPrecisionScalar> tol(100);
-    std::pair<HighPrecisionScalar,HighPrecisionScalar> result = boost::math::tools::bisect(r_to_rast, r_plus_hp,rast_max_hp, tol, it);
+//     std::uintmax_t it = 1000;
+//     boost::math::tools::eps_tolerance<HighPrecisionScalar> tol(100);
+//     std::pair<HighPrecisionScalar,HighPrecisionScalar> result = boost::math::tools::bisect(r_to_rast, r_plus_hp,rast_max_hp, tol, it);
     
-    HighPrecisionScalar r_hp = (result.first + result.second) / 2;
+//     HighPrecisionScalar r_hp = (result.first + result.second) / 2;
     
-    r[i] = r_hp.convert_to<Scalar>();
-    r_ast[i] = r_ast_hp.convert_to<Scalar>();
+//     r[i] = r_hp.convert_to<Scalar>();
+//     r_ast[i] = r_ast_hp.convert_to<Scalar>();
     
-    std::cout << std::setprecision(100);
-    std::cout << "r = " << r[i] << ", r_ast = " << r_ast[i] << std::endl;
-  }
+//     std::cout << std::setprecision(100);
+//     std::cout << "r = " << r[i] << ", r_ast = " << r_ast[i] << std::endl;
+//   }
 
-  // HighPrecisionScalar target = static_cast<HighPrecisionScalar>(-1000);
+//   // HighPrecisionScalar target = static_cast<HighPrecisionScalar>(-1000);
 
-  // auto r_to_rast =
-  //   [&](HighPrecisionScalar r_hp) -> HighPrecisionScalar {
-  //     std::cout << std::setprecision(100);
-  //     std::cout << "input = " << r_hp << std::endl;
-  //     return -target + r_hp
-  //     + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
-  //     - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp);
-  //   };
+//   // auto r_to_rast =
+//   //   [&](HighPrecisionScalar r_hp) -> HighPrecisionScalar {
+//   //     std::cout << std::setprecision(100);
+//   //     std::cout << "input = " << r_hp << std::endl;
+//   //     return -target + r_hp
+//   //     + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
+//   //     - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp);
+//   //   };
   
-  // std::uintmax_t it = 10000;
-  // int digits = std::numeric_limits<double>::digits;
-  // boost::math::tools::eps_tolerance<HighPrecisionScalar> tol(200 - 3);
-  // std::pair<HighPrecisionScalar,HighPrecisionScalar> result = boost::math::tools::bisect(r_to_rast, r_plus_hp, static_cast<HighPrecisionScalar>(100), tol, it);
-  // std::cout << std::setprecision(100);
-  // std::cout << "solution for r_ast = -100 is " << result.first << std::endl;
+//   // std::uintmax_t it = 10000;
+//   // int digits = std::numeric_limits<double>::digits;
+//   // boost::math::tools::eps_tolerance<HighPrecisionScalar> tol(200 - 3);
+//   // std::pair<HighPrecisionScalar,HighPrecisionScalar> result = boost::math::tools::bisect(r_to_rast, r_plus_hp, static_cast<HighPrecisionScalar>(100), tol, it);
+//   // std::cout << std::setprecision(100);
+//   // std::cout << "solution for r_ast = -100 is " << result.first << std::endl;
 
-  // auto r_to_rast_newton =
-  //   [&](HighPrecisionScalar r_hp) -> std::pair<HighPrecisionScalar, HighPrecisionScalar> {
-  //     std::cout << std::setprecision(100);
-  //     std::cout << "input = " << r_hp << std::endl;
-  //     return std::make_pair(-target + r_hp
-  // 			    + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
-  // 			    - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp),
-  // 			    (r_hp * r_hp + a_hp * a_hp) / (r_hp * r_hp - 2 * M_hp * r_hp + a_hp * a_hp) );
-  //   };
-  // HighPrecisionScalar result = boost::math::tools::newton_raphson_iterate(r_to_rast_newton, 3*M_hp, r_plus_hp, static_cast<HighPrecisionScalar>(100), 80);
+//   // auto r_to_rast_newton =
+//   //   [&](HighPrecisionScalar r_hp) -> std::pair<HighPrecisionScalar, HighPrecisionScalar> {
+//   //     std::cout << std::setprecision(100);
+//   //     std::cout << "input = " << r_hp << std::endl;
+//   //     return std::make_pair(-target + r_hp
+//   // 			    + (r_plus_hp * r_plus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_plus_hp)
+//   // 			    - (r_minus_hp * r_minus_hp + a_hp * a_hp) / (r_plus_hp - r_minus_hp) * log(r_hp - r_minus_hp),
+//   // 			    (r_hp * r_hp + a_hp * a_hp) / (r_hp * r_hp - 2 * M_hp * r_hp + a_hp * a_hp) );
+//   //   };
+//   // HighPrecisionScalar result = boost::math::tools::newton_raphson_iterate(r_to_rast_newton, 3*M_hp, r_plus_hp, static_cast<HighPrecisionScalar>(100), 80);
   
-  // std::cout << std::setprecision(100);
-  // std::cout << "solution for r_ast = -100 is " << result << std::endl;
+//   // std::cout << std::setprecision(100);
+//   // std::cout << "solution for r_ast = -100 is " << result << std::endl;
   
-  // {
-  //   typedef Eigen::Array<HighPrecisionScalar, -1, 1> Vector;
-  //   const HighPrecisionScalar M = HighPrecisionScalar("1.0");
-  //   const HighPrecisionScalar a = HighPrecisionScalar("0.5");
-  //   // const std::complex<HighPrecisionScalar> ii(HighPrecisionScalar("0"), HighPrecisionScalar("1"));
-  //   const long long int grid_size = 10;
-  //   auto expr = atan((a)*((pow((pow(r(seqN((2),((-4)+(grid_size)))),4))+((pow(a,2))*((r(seqN((2),((-4)+(grid_size)))))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))),-1))*((sqrt(r(seqN((2),((-4)+(grid_size))))))*((sqrt((pow(a,2))+((r(seqN((2),((-4)+(grid_size)))))*(((-2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))*(sqrt((pow(r(seqN((2),((-4)+(grid_size)))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))))));
+//   // {
+//   //   typedef Eigen::Array<HighPrecisionScalar, -1, 1> Vector;
+//   //   const HighPrecisionScalar M = HighPrecisionScalar("1.0");
+//   //   const HighPrecisionScalar a = HighPrecisionScalar("0.5");
+//   //   // const std::complex<HighPrecisionScalar> ii(HighPrecisionScalar("0"), HighPrecisionScalar("1"));
+//   //   const long long int grid_size = 10;
+//   //   auto expr = atan((a)*((pow((pow(r(seqN((2),((-4)+(grid_size)))),4))+((pow(a,2))*((r(seqN((2),((-4)+(grid_size)))))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))),-1))*((sqrt(r(seqN((2),((-4)+(grid_size))))))*((sqrt((pow(a,2))+((r(seqN((2),((-4)+(grid_size)))))*(((-2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))*(sqrt((pow(r(seqN((2),((-4)+(grid_size)))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((2),((-4)+(grid_size)))))))))))));
 
-  //   Vector expr_1 = sqrt((pow(a,2))+((r(seqN((0),(grid_size))))*(((-2)*(M))+(r(seqN((0),(grid_size)))))));
-  //   Vector expr_2 = sqrt((pow(r(seqN((0),(grid_size))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((0),(grid_size)))))));
-  //   Vector expr_3 = sqrt(r(seqN((0),(grid_size))));
-  //   Vector expr_4 = atan((a)*((expr_1)*((expr_2)*((expr_3)*(pow((pow(r(seqN((0),(grid_size))),4))+((pow(a,2))*((r(seqN((0),(grid_size))))*(((2)*(M))+(r(seqN((0),(grid_size))))))),-1))))));
+//   //   Vector expr_1 = sqrt((pow(a,2))+((r(seqN((0),(grid_size))))*(((-2)*(M))+(r(seqN((0),(grid_size)))))));
+//   //   Vector expr_2 = sqrt((pow(r(seqN((0),(grid_size))),3))+((pow(a,2))*(((2)*(M))+(r(seqN((0),(grid_size)))))));
+//   //   Vector expr_3 = sqrt(r(seqN((0),(grid_size))));
+//   //   Vector expr_4 = atan((a)*((expr_1)*((expr_2)*((expr_3)*(pow((pow(r(seqN((0),(grid_size))),4))+((pow(a,2))*((r(seqN((0),(grid_size))))*(((2)*(M))+(r(seqN((0),(grid_size))))))),-1))))));
 
-  // }
+//   // }
 
-}
+// }
