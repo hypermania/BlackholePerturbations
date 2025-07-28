@@ -105,6 +105,32 @@ struct FixedPositionObserver {
 };
 
 
+template<typename State = Eigen::ArrayXd, typename TimeScalar = double>
+struct GenericFixedPositionObserver {
+  typedef Eigen::internal::traits<State>::Scalar StateScalar;
+  std::string dir;
+  std::vector<long long int> positions;
+  std::vector<TimeScalar> t_list;
+  std::vector<StateScalar> psi_list;
+
+  GenericFixedPositionObserver(const std::string &dir_, const std::vector<long long int> &positions_) :
+    dir(dir_), positions(positions_)
+  {}
+  
+  void operator()(const State &x, const TimeScalar t) {
+    for(auto i : positions) {
+      psi_list.push_back(x[i]);
+    }
+    t_list.push_back(t);
+  }
+  
+  void save(void) const {
+    write_to_file(psi_list, dir + "psi_list.dat");
+    write_to_file(t_list, dir + "t_list.dat");    
+  }
+};
+
+
 struct ApproximateTimeObserver {
   // typedef Eigen::ArrayXd State;
   std::string dir;

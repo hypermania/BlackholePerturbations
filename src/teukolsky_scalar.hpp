@@ -65,11 +65,6 @@ struct TeukolskyScalarPDE {
   
   TeukolskyScalarPDE(Param param_);  
 
-  // Second order derivative has O(h^4) error
-  // Absorbing boundary conditions are used
-  //void free_propagation_new(const Vector &x, Vector &dxdt) const;
-
-  
   /*!
     \brief The function called by odeint library.
     \param[in] x The current state of the system.
@@ -78,11 +73,6 @@ struct TeukolskyScalarPDE {
   */
   void operator()(const State &x, State &dxdt, const Scalar t);
   
-  static Vector compute_r_ast_vector(const Scalar r_min, const Scalar r_max, const long long int N);
-  
-  static Vector compute_r_vector(const Scalar rast_min, const Scalar rast_max, const long long int N, const Scalar M, const Scalar a);
-  static HighPrecisionVector compute_hp_r_vector(const HighPrecisionScalar rast_min, const HighPrecisionScalar rast_max, const long long int N, const HighPrecisionScalar M, const HighPrecisionScalar a);
-
   static std::pair<long long int, long long int> idx_to_lm(const long long int idx);
 
   void compute_derivatives(const State &x, ComplexVector &dr_psi_lm, ComplexVector &drdr_psi_lm) const;

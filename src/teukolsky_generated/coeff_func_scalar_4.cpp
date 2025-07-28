@@ -1,0 +1,26 @@
+
+#include "../teukolsky.hpp"
+
+namespace Teukolsky {
+
+void compute_coeffs_scalar_20(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r, const std::vector<HighPrecisionVector> &expr, std::vector<ComplexVector> &coeffs) {
+coeffs[20] = std::complex<double>(1.0,0.0)*(((HighPrecisionScalar("-1.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))*((pow(a,-3))*((pow((pow(a,2))+(pow(r,2)),2))*((pow((pow(a,2))+((r)*(((-2)*(M))+(r))),-2))*((pow((pow(r,4))+((pow(a,2))*((r)*(((2)*(M))+(r)))),-1))*((expr[0])*((expr[1])*((expr[2])*(((-1)*((a)*((expr[0])*((expr[1])*(expr[2])))))+((pow((pow(a,2))+(pow(r,2)),2))*(expr[3]))))))))))).cast<double>());
+}
+
+void compute_coeffs_scalar_21(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r, const std::vector<HighPrecisionVector> &expr, std::vector<ComplexVector> &coeffs) {
+coeffs[21] = std::complex<double>(0.0,1.0)*(((-6)*((M)*((pow((pow(a,3))+((a)*((r)*(((-2)*(M))+(r)))),-2))*((pow((pow(r,3))+((pow(a,2))*(((2)*(M))+(r))),-1))*((expr[0])*((expr[1])*(((-1)*((a)*((r)*((expr[0])*(expr[1])))))+((pow((pow(a,2))+(pow(r,2)),2))*((expr[2])*(expr[3])))))))))).cast<double>());
+}
+
+void compute_coeffs_scalar_22(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r, const std::vector<HighPrecisionVector> &expr, std::vector<ComplexVector> &coeffs) {
+coeffs[22] = std::complex<double>(1.0,0.0)*(((HighPrecisionScalar("-0.2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))*((HighPrecisionScalar("1.870828693386970692791874366158274650878009903889363473151872733660017578153469513988404947597189786"))*((pow(a,-5))*((pow(r,-3))*((pow((pow(a,2))+((r)*(((-2)*(M))+(r))),-3))*((pow((pow(r,3))+((pow(a,2))*(((2)*(M))+(r))),-1))*((((2)*(pow(a,4)))+(((pow(a,2))*((r)*(((-6)*(M))+(r))))+((2)*((pow(r,2))*(((2)*(pow(M,2)))+(((M)*(r))+((-1)*(pow(r,2)))))))))*(((a)*((r)*(((15)*((pow(r,8))*(((-2)*(M))+(r))))+(((13)*((pow(a,8))*(((2)*(M))+(r))))+(((2)*((pow(a,2))*((pow(r,5))*(((-34)*(pow(M,2)))+(((-26)*((M)*(r)))+((29)*(pow(r,2))))))))+(((4)*((pow(a,4))*((pow(r,2))*(((-4)*(pow(M,3)))+(((-28)*((pow(M,2))*(r)))+(((3)*((M)*(pow(r,2))))+((21)*(pow(r,3)))))))))+((pow(a,6))*(((-44)*((pow(M,2))*(r)))+(((60)*((M)*(pow(r,2))))+((54)*(pow(r,3))))))))))))+((-3)*((pow((pow(a,2))+(pow(r,2)),2))*(((pow(a,4))+(((5)*(pow(r,4)))+((2)*((pow(a,2))*((r)*(((4)*(M))+((3)*(r))))))))*((expr[0])*((expr[1])*((expr[2])*(expr[3]))))))))))))))).cast<double>());
+}
+
+void compute_coeffs_scalar_23(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r, const std::vector<HighPrecisionVector> &expr, std::vector<ComplexVector> &coeffs) {
+coeffs[23] = std::complex<double>(1.0,0.0)*(((HighPrecisionScalar("0.5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))*((HighPrecisionScalar("1.870828693386970692791874366158274650878009903889363473151872733660017578153469513988404947597189786"))*((pow(a,-3))*((pow(r,-2))*((pow((pow(a,2))+((r)*(((-2)*(M))+(r))),-2))*((pow((pow(r,3))+((pow(a,2))*(((2)*(M))+(r))),-1))*(((a)*((r)*(((15)*((pow(r,8))*(((-2)*(M))+(r))))+(((13)*((pow(a,8))*(((2)*(M))+(r))))+(((2)*((pow(a,2))*((pow(r,5))*(((-34)*(pow(M,2)))+(((-26)*((M)*(r)))+((29)*(pow(r,2))))))))+(((4)*((pow(a,4))*((pow(r,2))*(((-4)*(pow(M,3)))+(((-28)*((pow(M,2))*(r)))+(((3)*((M)*(pow(r,2))))+((21)*(pow(r,3)))))))))+((pow(a,6))*(((-44)*((pow(M,2))*(r)))+(((60)*((M)*(pow(r,2))))+((54)*(pow(r,3))))))))))))+((-3)*((pow((pow(a,2))+(pow(r,2)),2))*(((pow(a,4))+(((5)*(pow(r,4)))+((2)*((pow(a,2))*((r)*(((4)*(M))+((3)*(r))))))))*((expr[0])*((expr[1])*((expr[2])*(expr[3])))))))))))))).cast<double>());
+}
+
+void compute_coeffs_scalar_24(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r, const std::vector<HighPrecisionVector> &expr, std::vector<ComplexVector> &coeffs) {
+coeffs[24] = std::complex<double>(1.0,0.0)*(((HighPrecisionScalar("-0.2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))*((HighPrecisionScalar("1.870828693386970692791874366158274650878009903889363473151872733660017578153469513988404947597189786"))*((pow(a,-5))*((pow((pow(a,2))+(pow(r,2)),2))*((pow((pow(a,2))+((r)*(((-2)*(M))+(r))),-3))*((pow((pow(r,4))+((pow(a,2))*((r)*(((2)*(M))+(r)))),-1))*(((a)*((r)*(((15)*((pow(r,8))*(((-2)*(M))+(r))))+(((13)*((pow(a,8))*(((2)*(M))+(r))))+(((2)*((pow(a,2))*((pow(r,5))*(((-34)*(pow(M,2)))+(((-26)*((M)*(r)))+((29)*(pow(r,2))))))))+(((4)*((pow(a,4))*((pow(r,2))*(((-4)*(pow(M,3)))+(((-28)*((pow(M,2))*(r)))+(((3)*((M)*(pow(r,2))))+((21)*(pow(r,3)))))))))+((pow(a,6))*(((-44)*((pow(M,2))*(r)))+(((60)*((M)*(pow(r,2))))+((54)*(pow(r,3))))))))))))+((-3)*((pow((pow(a,2))+(pow(r,2)),2))*(((pow(a,4))+(((5)*(pow(r,4)))+((2)*((pow(a,2))*((r)*(((4)*(M))+((3)*(r))))))))*((expr[0])*((expr[1])*((expr[2])*(expr[3])))))))))))))).cast<double>());
+}
+
+}

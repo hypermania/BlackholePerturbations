@@ -12,7 +12,7 @@ HOST_COMPILER ?= g++
 
 # Set if CUDA should be disabled or not (CUDA is enabled by default)
 # You can also disable cuda by calling "make disable-cuda=true"
-disable-cuda := true
+disable-cuda := false
 
 # Location of the CUDA Toolkit
 CUDA_PATH ?= /usr/local/cuda
@@ -85,7 +85,7 @@ endif
 
 # Compiler flags
 CXXFLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
-CXXFLAGS += -std=gnu++20 -Wall -DEIGEN_NO_CUDA -ftemplate-depth=20000 #-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
+CXXFLAGS += -std=c++20 -Wall -DEIGEN_NO_CUDA -ftemplate-depth=20000 #-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
 #CXXFLAGS += -march=alderlake -pthread
 CXXFLAGS += -march=native -pthread
 CXXFLAGS += -O3 -ffast-math
@@ -94,7 +94,7 @@ CXXFLAGS += -DNDEBUG
 
 NVCC_OPTIMIZE_FLAGS := -use_fast_math # -Xptxas -O3,-v
 NVCC_INCLUDE_DIR_FLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
-NVCCFLAGS += -std=c++20 -DEIGEN_NO_CUDA
+NVCCFLAGS += -std=c++20 -DEIGEN_NO_CUDA -DCUDA_API_PER_THREAD_DEFAULT_STREAM
 NVCCFLAGS += $(foreach library,$(program_LIBRARIES),-l$(library))
 
 
@@ -115,7 +115,7 @@ $(program_OBJS): $(program_H_SRCS) $(program_HPP_SRCS) $(program_CUH_SRCS) $(pro
 %.o: %.cpp %.gen
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-%.o: %.cu %.gen
+%.o: %.cu
 	$(NVCC) $(NVCC_INCLUDE_DIR_FLAGS) $(NVCCFLAGS) $(GENCODE_FLAGS) $(NVCC_OPTIMIZE_FLAGS) --diag-suppress 20012,20014 -o $@ -dc $<
 
 $(device_link_OBJ): $(program_CU_OBJS)

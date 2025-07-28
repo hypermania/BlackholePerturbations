@@ -27,11 +27,22 @@
 #include "examples.hpp"
 #include "rsh.hpp"
 
+void run_teukoksky(void);
 void run_teukoksky_benchmark(void);
+void test_cuda_graph(void);
 
 int main(int argc, char **argv) {
-  //run_coupled_eqn();
   
+  test_cuda_graph();
+  
+  //run_coupled_eqn();
+  //run_sourced_eqn();
+
+  return 0;
+}
+
+
+void run_teukoksky(void) {
   using namespace Eigen;
   using namespace boost::numeric::odeint;
   using namespace std::numbers;
@@ -73,17 +84,19 @@ int main(int argc, char **argv) {
   
   auto stepper = runge_kutta_fehlberg78<State, double, State, double>();
 
-  // const long long int rIdx = r_ast_to_i(r_min, r_max, N, 50.0);
-  // std::cout << "using rIdx = " << rIdx << std::endl;
-  // std::vector<long long int> positions;
-  // for(int i = 0; i < 2 * eqn.lm_size; ++i) {
-  //   positions.push_back(eqn.grid_size * i + rIdx);
-  // }
-  // auto observer1 = FixedPositionObserver(dir, positions);
-  // auto observer2 = ApproximateTimeObserver(dir, {50., 100., 150., 200., 250., 300., 350., 400., 450., 500., 550.});
-  // auto observer = ObserverPack(observer1, observer2);
+  const long long int rIdx = r_ast_to_i(param.rast_min, param.rast_max, param.N, 25.0);
+  std::cout << "using rIdx = " << rIdx << std::endl;
+  std::vector<long long int> positions;
+  for(int i = 0; i < 2 * eqn.lm_size; ++i) {
+    positions.push_back(eqn.grid_size * i + rIdx);
+  }
+  auto observer1 = GenericFixedPositionObserver<State>(dir, positions);
   
-  auto observer = ApproximateTimeObserver(dir, {10., 20., 30., 40.});
+  // auto observer2 = ApproximateTimeObserver(dir, {50., 100., 150., 200., 250., 300., 350., 400., 450., 500., 550.});
+  auto observer2 = ApproximateTimeObserver(dir, {10., 20., 30., 40.});
+  auto observer = ObserverPack(observer1, observer2);
+  
+
 
   State state(2 * eqn.lm_size * eqn.grid_size);
   state = 0;
@@ -99,17 +112,6 @@ int main(int argc, char **argv) {
   state(seqN(grid_begin, eqn.grid_size)) = pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
   state(seqN(eqn.grid_size * eqn.lm_size + grid_begin, eqn.grid_size)) = - pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
 
-  // {
-  //   TeukolskyScalarPDE::ComplexVector dr_psi_lm(eqn.lm_size * eqn.grid_size);
-  //   TeukolskyScalarPDE::ComplexVector drdr_psi_lm(eqn.lm_size * eqn.grid_size);
-  //   eqn.compute_derivatives(state, dr_psi_lm, drdr_psi_lm);
-  //   std::cout << drdr_psi_lm(Eigen::seqN(RSH::lm_to_idx(1, 1) * eqn.grid_size + 2500, 50)).transpose() << std::endl;
-  //   std::cout << dr_psi_lm(Eigen::seqN(RSH::lm_to_idx(1, 1) * eqn.grid_size + 2500, 50)).transpose() << std::endl;
-  // }
-  //     exit(0);
-
-  //exit(0);
-  
   // Solve the equation.
   run_and_measure_time("Solving equation",
   		       [&](){
@@ -120,14 +122,6 @@ int main(int argc, char **argv) {
   write_to_file(state, dir + "final_state.dat");
 
   observer.save();
-  
-  // typedef TeukolskyScalarPDE::HighPrecisionScalar HP;  
-  // auto c = std::complex<HP>(HP(1.0), HP(1.0));
-  
-  //run_coupled_eqn();
-  //run_sourced_eqn();
-
-  return 0;
 }
 
 void run_teukoksky_benchmark(void) {
