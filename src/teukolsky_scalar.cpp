@@ -46,8 +46,8 @@ TeukolskyScalarPDE::TeukolskyScalarPDE(Param param_) : param(param_) {
   auto t3 = std::chrono::system_clock::now();
   std::chrono::duration<double> time_diff_1 = t2 - t1;
   std::chrono::duration<double> time_diff_2 = t3 - t2;
-  std::cout << std::setw(9) << "time spent 1 = " << time_diff_1.count() << " s" << '\n';
-  std::cout << std::setw(9) << "time spent 2 = " << time_diff_2.count() << " s" << '\n';
+  std::cout << std::setw(9) << "(TeukolskyScalarPDE) time spent computing radial coordinates = " << time_diff_1.count() << " s" << '\n';
+  std::cout << std::setw(9) << "(TeukolskyScalarPDE) time spent computing coupling coefficients = " << time_diff_2.count() << " s" << '\n';
   
   Q = [N](const Scalar t)->Vector{ return Vector::Zero(N+1); };
 }

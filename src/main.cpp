@@ -3,6 +3,7 @@
 #include <functional>
 #include <typeinfo>
 //#include <thread>
+#include <random>
 
 #include <Eigen/Dense>
 #include <boost/numeric/odeint.hpp>
@@ -28,11 +29,54 @@
 #include "examples.hpp"
 #include "rsh.hpp"
 
-void run_teukoksky(void);
-void run_teukoksky_benchmark(void);
+#ifndef DISABLE_CUDA
+#include <thrust/device_vector.h>
+#include "cuda_wrapper.cuh"
+#include "odeint_thrust/thrust.hpp"
+#endif
+
+namespace Random
+{
+  std::mt19937 get_generator_from_device()
+  {
+    std::random_device rd{};
+    return std::mt19937{ rd() };
+  }
+
+  static std::mt19937 mt{ get_generator_from_device() };
+  static std::normal_distribution<double> dist{0.0, 1.0};
+  static std::uniform_real_distribution<double> dist_angle{0.0, 2 * std::numbers::pi};
+
+  void set_generator_seed(std::mt19937::result_type seed)// long unsigned int seed)
+  {
+    mt = std::mt19937{ seed };
+  }
+  double generate_random_normal()
+  {
+    return dist(mt);
+  }
+  double generate_random_angle()
+  {
+    return dist_angle(mt);
+  }
+}
+
+
+void run_teukolsky(void);
+void run_teukolsky_benchmark(void);
 void test_cuda_graph(void);
+void test_teukolsky_cuda(void);
 
 int main(int argc, char **argv) {
+  // test_teukolsky_cuda();
+  // return 0;
+  // run_teukolsky();
+  
+  using namespace Eigen;
+  using namespace boost::numeric::odeint;
+  using namespace std::numbers;
+  using std::array;
+  
   typedef CudaTeukolskyScalarPDE Equation;
   typedef Equation::Param Param;
   typedef Equation::State State;
@@ -44,15 +88,52 @@ int main(int argc, char **argv) {
   param.a = 0.49;
 
   param.rast_min = -50;
-  param.rast_max = 75;
+  param.rast_max = 750;
   param.N = static_cast<long long int>((param.rast_max - param.rast_min) / 0.03); //1000;
   
   param.t_start = 0;
-  param.t_end = 50;
+  param.t_end = 100;
   param.t_interval = 0.5;
   param.delta_t = 0.01;
 
   Equation eqn(param);
+
+  // typedef TeukolskyScalarPDE CPUEquation;
+  // CPUEquation eqn_cpu(param);
+
+  auto stepper = runge_kutta_fehlberg78<State, double, State, double>();
+
+  State state(2 * eqn.lm_size * eqn.grid_size);
+  ArrayXcd state_eigen(state.size());
+
+  ArrayXd r_ast(eqn.grid_size);
+  for(int i = 0; i < eqn.grid_size; ++i) {
+    r_ast[i] = i_to_r_ast(param.rast_min, param.rast_max, param.N, i);
+  }
+
+  const double r_source = 25;
+  const double sigma = 0.5;
+  const long long int grid_begin = RSH::lm_to_idx(1, 1) * eqn.grid_size;
+  //const std::complex<double> phase_factor = exp(std::complex<double>(0.0, 1.0) * Random::generate_random_angle());
+  state_eigen(seqN(grid_begin, eqn.grid_size)) = pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
+  state_eigen(seqN(eqn.grid_size * eqn.lm_size + grid_begin, eqn.grid_size)) = - pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
+
+  
+  copy_vector(state, state_eigen);  
+  // Solve the equation.
+  run_and_measure_time("Solving equation",
+		       [&](){
+			 int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, param.t_start, param.t_end, param.delta_t); //, std::ref(observer));
+			 std::cout << "total number of steps = " << num_steps << '\n';
+		       } );
+
+  // copy_vector(dxdt_eigen, state);
+  
+  // write_to_file(state, dir + "final_state.dat");
+
+  // observer.save();
+  
+  // run_teukolsky();
   
   //test_cuda_graph();
   
@@ -62,8 +143,88 @@ int main(int argc, char **argv) {
   return 0;
 }
 
+void test_teukolsky_cuda(void) {
+  using namespace Eigen;
+  using namespace boost::numeric::odeint;
+  using namespace std::numbers;
+  using std::array;
+  
+  typedef CudaTeukolskyScalarPDE Equation;
+  typedef Equation::Param Param;
+  typedef Equation::State State;
+  
+  Param param;
+  param.s = 0;
+  param.l_max = 3;
+  param.M = 0.5;
+  param.a = 0.49;
 
-void run_teukoksky(void) {
+  param.rast_min = -50;
+  param.rast_max = 750;
+  param.N = static_cast<long long int>((param.rast_max - param.rast_min) / 0.03); //1000;
+  
+  param.t_start = 0;
+  param.t_end = 1;
+  param.t_interval = 0.5;
+  param.delta_t = 0.01;
+
+  Equation eqn(param);
+
+  typedef TeukolskyScalarPDE CPUEquation;
+  CPUEquation eqn_cpu(param);
+
+  auto stepper = runge_kutta_fehlberg78<State, double, State, double>();
+
+  for(size_t times = 0; times < 100; ++times) {
+    State state(2 * eqn.lm_size * eqn.grid_size);
+    ArrayXcd state_eigen(state.size());
+    State dxdt(state.size());
+    ArrayXcd dxdt_eigen(state.size());
+    ArrayXcd dxdt_eigen_2(state.size());
+
+    ArrayXd r_ast(eqn.grid_size);
+    for(int i = 0; i < eqn.grid_size; ++i) {
+      r_ast[i] = i_to_r_ast(param.rast_min, param.rast_max, param.N, i);
+    }
+
+    for(size_t i = 0; i < eqn.lm_size; ++i) {
+      // const long long int grid_begin = RSH::lm_to_idx(1, 1) * eqn.grid_size;
+      const double r_source = 25 + 20 * Random::generate_random_angle();
+      const double sigma = 0.5;
+      const long long int grid_begin = i * eqn.grid_size;
+      const std::complex<double> phase_factor = exp(std::complex<double>(0.0, 1.0) * Random::generate_random_angle());
+      state_eigen(seqN(grid_begin, eqn.grid_size)) = phase_factor * pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
+      state_eigen(seqN(eqn.grid_size * eqn.lm_size + grid_begin, eqn.grid_size)) = - pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source) * phase_factor;
+    }
+
+    copy_vector(state, state_eigen);
+    std::cout << "eqn() : 1" << std::endl;
+    eqn(state, dxdt, 0.0);
+    std::cout << "eqn() : 2" << std::endl;
+    eqn(state, dxdt, 0.0);
+    std::cout << "eqn() : 3" << std::endl;
+    eqn(state, dxdt, 0.0);
+    copy_vector(dxdt_eigen, dxdt);
+  
+    // std::cout << "(state_eigen) min, max = " << state_eigen.abs2().minCoeff() << ", " << state_eigen.abs2().maxCoeff() << std::endl;
+    // std::cout << "(dxdt_eigen) min, max = " << dxdt_eigen.abs2().minCoeff() << ", " << dxdt_eigen.abs2().maxCoeff() << std::endl;
+    std::cout << "(state_eigen) l2 norm = " << sqrt(state_eigen.abs2().sum()) << std::endl;
+    std::cout << "(dxdt_eigen) l2 norm = " << sqrt(dxdt_eigen.abs2().sum()) << std::endl;
+  
+    eqn_cpu(state_eigen, dxdt_eigen_2, 0.0);
+
+    ArrayXcd diff = dxdt_eigen_2 - dxdt_eigen;
+    const double diff_normalized = sqrt(diff.abs2().sum()) / sqrt(state_eigen.abs2().sum());
+    std::cout << "(diff) max = " << diff.abs2().maxCoeff() << std::endl;
+    std::cout << "(diff) l2 norm normalized = " << diff_normalized << std::endl;
+
+    assert(diff_normalized < 1e-10);
+
+  }
+}
+
+
+void run_teukolsky(void) {
   using namespace Eigen;
   using namespace boost::numeric::odeint;
   using namespace std::numbers;
@@ -80,14 +241,14 @@ void run_teukoksky(void) {
   param.s = 0; //.convert_to<double>();
   param.l_max = 3; //.convert_to<double>();
   param.M = 0.5;
-  param.a = 0.49;
+  param.a = param.M * 0.9;
 
   param.rast_min = -50;
-  param.rast_max = 75;
+  param.rast_max = 125;
   param.N = static_cast<long long int>((param.rast_max - param.rast_min) / 0.03); //1000;
   
   param.t_start = 0; //.convert_to<double>();
-  param.t_end = 50; //.convert_to<double>();
+  param.t_end = 100; //.convert_to<double>();
   param.t_interval = 0.5;
   param.delta_t = 0.01; //.convert_to<double>();
 
@@ -131,7 +292,7 @@ void run_teukoksky(void) {
 
   const double r_source = 25;
   const double sigma = 0.5;
-  const long long int grid_begin = RSH::lm_to_idx(1, 1) * eqn.grid_size;
+  const long long int grid_begin = RSH::lm_to_idx(2, 2) * eqn.grid_size;
   state(seqN(grid_begin, eqn.grid_size)) = pow(2 * pi, -0.5) * (1 / sigma) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma));
   state(seqN(eqn.grid_size * eqn.lm_size + grid_begin, eqn.grid_size)) = - pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
 
@@ -147,7 +308,7 @@ void run_teukoksky(void) {
   observer.save();
 }
 
-void run_teukoksky_benchmark(void) {
+void run_teukolsky_benchmark(void) {
   using namespace Eigen;
   using namespace boost::numeric::odeint;
   using namespace std::numbers;

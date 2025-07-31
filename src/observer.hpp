@@ -107,7 +107,7 @@ struct FixedPositionObserver {
 
 template<typename State = Eigen::ArrayXd, typename TimeScalar = double>
 struct GenericFixedPositionObserver {
-  typedef Eigen::internal::traits<State>::Scalar StateScalar;
+  typedef Eigen::DenseBase<State>::Scalar StateScalar;
   std::string dir;
   std::vector<long long int> positions;
   std::vector<TimeScalar> t_list;

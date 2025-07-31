@@ -7,6 +7,8 @@
 #ifndef TEUKOLSKY_SCALAR_CUDA_CUH
 #define TEUKOLSKY_SCALAR_CUDA_CUH
 
+#include <map>
+
 #include <Eigen/Dense>
 // #include <boost/math/special_functions/lambert_w.hpp>
 #include <boost/multiprecision/cpp_bin_float.hpp>
@@ -59,8 +61,8 @@ struct CudaTeukolskyScalarPDE {
   ComplexVector drdr_psi_lm;
   ComplexVector dr_psi_lm;
 
-  // CUDA graph for evaluating the system ( for operator() )
-  cudaGraphExec_t system_graph_exec;
+  // CUDA graph instances for evaluating the system ( used in operator() )
+  std::map<std::pair<const void *, const void *>, cudaGraphExec_t> graph_exec_mapping;
   
   CudaTeukolskyScalarPDE(Param param_);
   // ~CudaTeukolskyScalarPDE();
@@ -73,8 +75,6 @@ struct CudaTeukolskyScalarPDE {
   */
   void operator()(const State &x, State &dxdt, const Scalar t);
   
-  //void compute_derivatives(const State &x, ComplexVector &dr_psi_lm, ComplexVector &drdr_psi_lm) const;
-
   cudaGraph_t prepare_cuda_graph(const State &x, State &dxdt);
 
 };

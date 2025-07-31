@@ -50,6 +50,8 @@ namespace Teukolsky
   extern const CouplingInfoFlat dt_psi_lm_coupling_info_scalar;
   
   std::vector<ComplexVector> compute_coeffs_scalar(const HighPrecisionScalar a, const HighPrecisionScalar M, const HighPrecisionVector &r);
+
+  void prepare_coeffs_scalar(std::vector<ComplexVector> &coeffs, const Scalar rast_min, const Scalar rast_max, const long long int N, const Scalar M, const Scalar a);
 }
 
 #endif

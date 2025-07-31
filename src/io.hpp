@@ -24,7 +24,8 @@ template<typename Derived>
 void write_to_file(const Eigen::PlainObjectBase<Derived> &obj, std::string filename){
   std::ofstream file(filename, std::ios::binary);
   if(file.is_open()){
-    file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::DenseBase<Derived>::Scalar));
+    // file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::DenseBase<Derived>::Scalar));
+    file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::PlainObjectBase<Derived>::Scalar));
   }
 }
 
@@ -35,10 +36,24 @@ void write_to_filename_template(const Eigen::PlainObjectBase<Derived> &obj, cons
   sprintf(filename, format_string.data(), idx);
   std::ofstream file(filename, std::ios::binary);
   if(file.is_open()){
-    file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::DenseBase<Derived>::Scalar));
+    // file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::DenseBase<Derived>::Scalar));
+    file.write((char *)obj.data(), obj.size() * sizeof(typename Eigen::PlainObjectBase<Derived>::Scalar));
   }
 }
 
 #endif
+
+// #ifndef DISABLE_CUDA
+// #include <thrust/device_vector.h>
+// template<typename ThrustScalar>
+// void write_to_file(const thrust::device_vector<ThrustScalar> &obj, std::string filename){
+//   std::vector<ThrustScalar> buffer(obj.size());
+//   copy_vector(buffer, obj);
+//   std::ofstream file(filename, std::ios::binary);
+//   if(file.is_open()){
+//     file.write((char *)buffer.data(), obj.size() * sizeof(ThrustScalar));
+//   }
+// }
+// #endif
 
 #endif

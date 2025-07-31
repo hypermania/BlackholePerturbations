@@ -50,7 +50,7 @@ endif
 program_NAME := main
 src_DIR := src
 program_C_SRCS := $(wildcard $(src_DIR)/*.c)
-program_CXX_SRCS := $(wildcard $(src_DIR)/*.cpp) $(wildcard $(src_DIR)/**/*.cpp)
+program_CXX_SRCS := $(wildcard $(src_DIR)/*.cpp) $(wildcard $(src_DIR)/teukolsky_generated/*.cpp)
 program_H_SRCS := $(wildcard $(src_DIR)/*.h)
 program_HPP_SRCS := $(wildcard $(src_DIR)/*.hpp)
 program_GEN_SRCS := $(wildcard $(src_DIR)/*.gen)
@@ -85,7 +85,8 @@ endif
 
 # Compiler flags
 CXXFLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
-CXXFLAGS += -std=c++20 -Wall -DEIGEN_NO_CUDA -ftemplate-depth=20000 #-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
+CXXFLAGS += -std=c++20 -Wall -DEIGEN_DONT_PARALLELIZE -DEIGEN_NO_CUDA -ftemplate-depth=20000
+#-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
 #CXXFLAGS += -march=alderlake -pthread
 CXXFLAGS += -march=native -pthread
 CXXFLAGS += -O3 -ffast-math
@@ -94,7 +95,7 @@ CXXFLAGS += -DNDEBUG
 
 NVCC_OPTIMIZE_FLAGS := -use_fast_math # -Xptxas -O3,-v
 NVCC_INCLUDE_DIR_FLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
-NVCCFLAGS += -std=c++20 -DEIGEN_NO_CUDA -DCUDA_API_PER_THREAD_DEFAULT_STREAM
+NVCCFLAGS += -std=c++20 -DCUDA_API_PER_THREAD_DEFAULT_STREAM -DEIGEN_NO_CUDA 
 NVCCFLAGS += $(foreach library,$(program_LIBRARIES),-l$(library))
 
 
