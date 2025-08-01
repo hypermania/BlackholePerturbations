@@ -17,10 +17,12 @@
 #include "param.hpp"
 #include "io.hpp"
 #include "observer.hpp"
+
 //#include "regge_wheeler.hpp"
 //#include "regge_wheeler_precise.hpp"
 //#include "cubic_scalar_simplified.hpp"
 #include "cubic_scalar.hpp"
+
 #include "boost/type_index.hpp"
 
 #include "teukolsky_scalar.hpp"
@@ -29,11 +31,18 @@
 #include "examples.hpp"
 #include "rsh.hpp"
 
-#ifndef DISABLE_CUDA
+//#ifndef DISABLE_CUDA
 #include <thrust/device_vector.h>
 #include "cuda_wrapper.cuh"
 #include "odeint_thrust/thrust.hpp"
-#endif
+//#endif
+
+void run_teukolsky(void);
+void run_teukolsky_benchmark(void);
+void test_cuda_graph(void);
+//int test_cuda_gpudirect(const thrust::device_vector<thrust::complex<double>> &vec);
+void test_teukolsky_cuda(void);
+
 
 namespace Random
 {
@@ -62,15 +71,16 @@ namespace Random
 }
 
 
-void run_teukolsky(void);
-void run_teukolsky_benchmark(void);
-void test_cuda_graph(void);
-void test_teukolsky_cuda(void);
 
 int main(int argc, char **argv) {
-  // test_teukolsky_cuda();
+  // CudaTeukolskyScalarPDE::State to_read;
+  // gpudirect_read(to_read, "testfile_gpudirect");
+  // gpudirect_write(to_read, "testfile_gpudirect_2");
+
+  // profile_function(10000, [&](void){ gpudirect_write(to_read, "testfile_gpudirect_2"); });
+  
   // return 0;
-  // run_teukolsky();
+
   
   using namespace Eigen;
   using namespace boost::numeric::odeint;
@@ -80,21 +90,26 @@ int main(int argc, char **argv) {
   typedef CudaTeukolskyScalarPDE Equation;
   typedef Equation::Param Param;
   typedef Equation::State State;
+
+  const std::string dir = "output/test_teukolsky_cuda/";
+  prepare_directory_for_output(dir);
   
   Param param;
   param.s = 0;
-  param.l_max = 3;
+  param.l_max = 5;
   param.M = 0.5;
-  param.a = 0.49;
+  param.a = 0.9 * param.M;
 
-  param.rast_min = -50;
-  param.rast_max = 750;
+  param.rast_min = -500;
+  param.rast_max = 1000;
   param.N = static_cast<long long int>((param.rast_max - param.rast_min) / 0.03); //1000;
   
   param.t_start = 0;
-  param.t_end = 100;
+  param.t_end = 1000;
   param.t_interval = 0.5;
   param.delta_t = 0.01;
+
+  save_param_for_Mathematica(param, dir);
 
   Equation eqn(param);
 
@@ -103,15 +118,25 @@ int main(int argc, char **argv) {
 
   auto stepper = runge_kutta_fehlberg78<State, double, State, double>();
 
+
+  const long long int rIdx = r_ast_to_i(param.rast_min, param.rast_max, param.N, 50.0);
+  auto recorder = ThrustRecorder(rIdx, eqn.lm_size, eqn.grid_size);
+  auto observer1 = DenseTransformAndRecordObserver(dir, recorder);
+  
+  auto observer2 = ApproximateTimeObserver(dir, {0., 10., 20., 30., 40., 50., 60., 70., 80., 90., 100., 110., 120., 130., 140., 150., 160., 170., 180., 190., 200.});
+  
+  auto observer = ObserverPack(observer1, observer2);
+  
   State state(2 * eqn.lm_size * eqn.grid_size);
   ArrayXcd state_eigen(state.size());
+  state_eigen = 0;
 
   ArrayXd r_ast(eqn.grid_size);
   for(int i = 0; i < eqn.grid_size; ++i) {
     r_ast[i] = i_to_r_ast(param.rast_min, param.rast_max, param.N, i);
   }
 
-  const double r_source = 25;
+  const double r_source = 50;
   const double sigma = 0.5;
   const long long int grid_begin = RSH::lm_to_idx(1, 1) * eqn.grid_size;
   //const std::complex<double> phase_factor = exp(std::complex<double>(0.0, 1.0) * Random::generate_random_angle());
@@ -119,23 +144,20 @@ int main(int argc, char **argv) {
   state_eigen(seqN(eqn.grid_size * eqn.lm_size + grid_begin, eqn.grid_size)) = - pow(2 * pi, -0.5) * pow(sigma, -3) * exp(-(r_ast - r_source)*(r_ast - r_source) / (2 * sigma * sigma)) * (r_ast - r_source);
 
   
-  copy_vector(state, state_eigen);  
-  // Solve the equation.
+  copy_vector(state, state_eigen);
+
+
+  // // Solve the equation.
   run_and_measure_time("Solving equation",
 		       [&](){
-			 int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, param.t_start, param.t_end, param.delta_t); //, std::ref(observer));
+			 int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, param.t_start, param.t_end, param.delta_t, std::ref(observer));
 			 std::cout << "total number of steps = " << num_steps << '\n';
 		       } );
-
-  // copy_vector(dxdt_eigen, state);
-  
-  // write_to_file(state, dir + "final_state.dat");
-
-  // observer.save();
+  write_to_file(state, dir + "final_state.dat");
+  observer.save();
   
   // run_teukolsky();
   
-  //test_cuda_graph();
   
   //run_coupled_eqn();
   //run_sourced_eqn();

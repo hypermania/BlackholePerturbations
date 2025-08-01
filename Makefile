@@ -75,7 +75,7 @@ device_link_OBJ := $(src_DIR)/device_link.o
 ifeq ($(disable-cuda),false)
 	program_INCLUDE_DIRS += $(CUDA_INCLUDE_DIR)
 	program_LIBRARY_DIRS += $(CUDA_LIBRARY_DIR)
-	program_LIBRARIES += cudart cufft_static culibos
+	program_LIBRARIES += cudart cufft_static culibos cufile
 	program_OBJS += $(program_CU_OBJS) $(device_link_OBJ)
 else
 	CXXFLAGS += -D DISABLE_CUDA

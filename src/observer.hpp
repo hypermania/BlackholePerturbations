@@ -12,7 +12,10 @@
 #include <string>
 #include <type_traits>
 
+
 #include "Eigen/Dense"
+#include "io.hpp"
+#include "cuda_wrapper.cuh"
 
 
 template<typename State>
@@ -131,6 +134,52 @@ struct GenericFixedPositionObserver {
 };
 
 
+template<typename Recorder>
+struct DenseTransformAndRecordObserver {
+  typedef Recorder::State State;
+  typedef Recorder::StateScalar StateScalar;
+  typedef Recorder::TimeScalar TimeScalar;
+  std::string dir;
+  std::vector<TimeScalar> t_list;
+  std::vector<StateScalar> psi_list;
+  Recorder recorder;
+
+  DenseTransformAndRecordObserver(const std::string &dir_, const Recorder &recorder_) :
+    dir(dir_), recorder(recorder_)
+  {}
+  
+  void operator()(const State &x, const TimeScalar t) {
+    recorder(psi_list, x, t);
+    t_list.push_back(t);
+  }
+  
+  void save(void) const {
+    write_to_file(psi_list, dir + "psi_list.dat");
+    write_to_file(t_list, dir + "t_list.dat");    
+  }
+};
+
+struct ThrustRecorder {
+  typedef thrust::device_vector<thrust::complex<double>> State;
+  typedef thrust::complex<double> StateScalar;
+  typedef double TimeScalar;
+  long long int r_idx;
+  long long int lm_size;
+  long long int grid_size;
+  
+  ThrustRecorder(const long long int r_idx_, const long long int lm_size_, const long long int grid_size_)
+    : r_idx(r_idx_), lm_size(lm_size_), grid_size(grid_size_) {}
+  
+  void operator()(std::vector<StateScalar> &psi_list, const State &x, const double t) {
+    std::vector<StateScalar> temporary(2 * lm_size);
+    cudaMemcpy2DWrapper((void *)temporary.data(), sizeof(thrust::complex<double>),
+			(const void *)(thrust::raw_pointer_cast(x.data() + r_idx)), grid_size * sizeof(thrust::complex<double>),
+			sizeof(thrust::complex<double>), 2 * lm_size);
+    psi_list.insert(psi_list.end(), temporary.begin(), temporary.end());
+  }
+};
+
+
 struct ApproximateTimeObserver {
   // typedef Eigen::ArrayXd State;
   std::string dir;
@@ -141,14 +190,6 @@ struct ApproximateTimeObserver {
   ApproximateTimeObserver(const std::string &dir_, const std::vector<double> times_) :
     dir(dir_), times(times_), current_idx(0)
   {}
-
-  // void operator()(const State &x, const double t) {
-  //   if(current_idx < times.size() && t >= times[current_idx]) {
-  //     write_to_filename_template(x, dir + "state_%d.dat", current_idx);
-  //     ++current_idx;
-  //     t_list.push_back(t);
-  //   }
-  // }
 
   template<typename State, typename Scalar>
   inline void operator()(const State &x, const Scalar t) {
@@ -171,6 +212,15 @@ inline void ApproximateTimeObserver::operator()<Eigen::ArrayXcd, double>(const E
     //if constexpr(std::is_same_v<Eigen::internal::traits<State>::Scalar, std::complex<double>>){
     Eigen::ArrayXcd x_temp = x;
     write_to_filename_template(x_temp, dir + "state_%d.dat", current_idx);
+    ++current_idx;
+    t_list.push_back(static_cast<double>(t));
+  }
+}
+  
+template<>
+inline void ApproximateTimeObserver::operator()<thrust::device_vector<thrust::complex<double>>, double>(const thrust::device_vector<thrust::complex<double>> &x, const double t) {
+  if(current_idx < times.size() && t >= times[current_idx]) {
+    write_to_filename_template(x, dir + "state_%d.dat", current_idx);
     ++current_idx;
     t_list.push_back(static_cast<double>(t));
   }
