@@ -506,8 +506,8 @@ int main(int argc, char **argv) {
     observer.save();
   };
 
-  run_teukolsky_cubic(0, 0.01, 0.1, 0, "output/teukolsky_a_001_lambda_01/");
-  run_teukolsky_cubic(0, 0.9, 0.01, 0, "output/teukolsky_a_09_lambda_001/");
+  // run_teukolsky_cubic(0, 0.01, 0.1, 0, "output/teukolsky_a_001_lambda_01/");
+  // run_teukolsky_cubic(0, 0.9, 0.01, 0, "output/teukolsky_a_09_lambda_001/");
   run_teukolsky_precise_eqn();
   
   // run_teukolsky_cubic(-1, 0.1, 0, 0.6, "output/teukolsky_s_1_a_01_lambda_0_eps_06/");
