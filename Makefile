@@ -104,11 +104,15 @@ LDFLAGS += $(foreach librarydir,$(program_LIBRARY_DIRS),-L$(librarydir))
 LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 
 
-.PHONY: all clean distclean benchmark-precise
+.PHONY: all clean distclean benchmark-precise check-precise-performance
 
 all: $(program_NAME)
 
 benchmark-precise: test/benchmark_teukolsky_precise
+
+check-precise-performance: benchmark-precise
+	OMP_PROC_BIND=close OMP_PLACES=cores OMP_WAIT_POLICY=active \
+		./test/benchmark_teukolsky_precise 50000 60 6
 
 test/benchmark_teukolsky_precise: test/benchmark_teukolsky_precise.cpp src/teukolsky_precise.hpp
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \

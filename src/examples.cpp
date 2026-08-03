@@ -472,15 +472,12 @@ void run_teukolsky_precise_eqn(void) {
           -(radial_offset * radial_offset) / denom);
     }
 
-    eqn.Q = [&](const Scalar &t, Vector &result)->void {
+    eqn.set_separable_source(std::move(spatial_source),
+                             [r_source, denom](const Scalar &t)->Scalar {
       const Scalar time_offset = t - r_source;
-      const Scalar time_factor = boost::multiprecision::exp(
+      return boost::multiprecision::exp(
           -(time_offset * time_offset) / denom);
-#pragma omp parallel for schedule(static)
-      for(long long int i = 0; i <= N; ++i) {
-        result[i] = time_factor * spatial_source[i];
-      }
-    };
+    });
       
     Vector state = Vector::Zero(2 * (N+1));
       

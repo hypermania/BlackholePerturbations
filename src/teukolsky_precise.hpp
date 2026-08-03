@@ -23,6 +23,8 @@
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <boost/multiprecision/float128.hpp>
 #include <boost/multiprecision/eigen.hpp>
+#include <stdexcept>
+#include <utility>
 #include "discretization.hpp"
 
 #ifdef _OPENMP
@@ -62,8 +64,20 @@ struct TeukolskyPDEPrecise {
   Scalar inv_h_sqr;
   long long int grid_size;
   std::function<void(const Scalar &, Vector &)> Q;
+  std::function<Scalar(const Scalar &)> separable_source_time_factor;
+  Vector separable_source_spatial;
 
   mutable Vector Q_workspace;
+
+  void set_separable_source(Vector spatial,
+                            std::function<Scalar(const Scalar &)> time_factor) {
+    if(spatial.size() != grid_size) {
+      throw std::invalid_argument("separable source size does not match the grid");
+    }
+    separable_source_spatial = std::move(spatial);
+    separable_source_time_factor = std::move(time_factor);
+    Q = {};
+  }
   
   TeukolskyPDEPrecise(Param param_) : param(param_) {
     const Scalar r_min = param.r_min;
@@ -95,7 +109,8 @@ struct TeukolskyPDEPrecise {
     A = Scalar(2 * s) * (r - Scalar(3) * M) * inv_r2;
     C = Scalar(2 * s) * (r - M) * inv_r2;
     C_d1_factor = C * (inv_h / Scalar(12));
-    center_factor = -Scalar(30) * (inv_h_sqr / Scalar(12)) - V;
+    const Scalar d2_factor = inv_h_sqr / Scalar(12);
+    center_factor = -Scalar(30) * d2_factor - V;
     Q_workspace.resize(grid_size);
   }
 
@@ -110,9 +125,22 @@ struct TeukolskyPDEPrecise {
     const auto Pi  = x.tail(grid_size);
     auto dpsi = dxdt.head(grid_size);
     auto dPi  = dxdt.tail(grid_size);
+    const Scalar *__restrict__ psi_data = x.data();
+    const Scalar *__restrict__ Pi_data = x.data() + grid_size;
+    Scalar *__restrict__ dpsi_data = dxdt.data();
+    Scalar *__restrict__ dPi_data = dxdt.data() + grid_size;
+    const Scalar *__restrict__ A_data = A.data();
+    const Scalar *__restrict__ C_d1_data = C_d1_factor.data();
+    const Scalar *__restrict__ center_data = center_factor.data();
+    const Scalar *__restrict__ source_data = Q_workspace.data();
+    const Scalar *__restrict__ source_spatial_data = separable_source_spatial.data();
 
+    const bool has_separable_source = static_cast<bool>(separable_source_time_factor);
     const bool has_source = static_cast<bool>(Q);
-    if(has_source) {
+    Scalar source_time_factor = 0;
+    if(has_separable_source) {
+      source_time_factor = separable_source_time_factor(t);
+    } else if(has_source) {
       Q(t, Q_workspace);
     }
 
@@ -126,18 +154,20 @@ struct TeukolskyPDEPrecise {
     {
 #pragma omp for schedule(static)
       for(long long int i = 2; i <= grid_size - 3; ++i) {
-        const Scalar near_sum = psi(i-1) + psi(i+1);
-        const Scalar far_sum = psi(i-2) + psi(i+2);
-        const Scalar gradient = Scalar(8) * (psi(i+1) - psi(i-1))
-                                + psi(i-2) - psi(i+2);
-        dPi(i) = near_factor * near_sum + far_factor * far_sum
-                 + center_factor[i] * psi(i) - C_d1_factor[i] * gradient
-                 - A[i] * Pi(i);
-        if(has_source) {
-          dPi(i) += Q_workspace(i);
+        const Scalar near_sum = psi_data[i-1] + psi_data[i+1];
+        const Scalar far_sum = psi_data[i-2] + psi_data[i+2];
+        const Scalar gradient = Scalar(8) * (psi_data[i+1] - psi_data[i-1])
+                                + psi_data[i-2] - psi_data[i+2];
+        dPi_data[i] = near_factor * near_sum + far_factor * far_sum
+                      + center_data[i] * psi_data[i] - C_d1_data[i] * gradient
+                      - A_data[i] * Pi_data[i];
+        if(has_separable_source) {
+          dPi_data[i] += source_time_factor * source_spatial_data[i];
+        } else if(has_source) {
+          dPi_data[i] += source_data[i];
         }
-        dpsi(i) = Pi(i) - kofac * (far_sum - Scalar(4) * near_sum
-                                   + Scalar(6) * psi(i));
+        dpsi_data[i] = Pi_data[i] - kofac * (far_sum - Scalar(4) * near_sum
+                                             + Scalar(6) * psi_data[i]);
       }
 
 #pragma omp single nowait
@@ -148,7 +178,9 @@ struct TeukolskyPDEPrecise {
           Scalar d1_0 = (-Scalar(25)*psi(0) + Scalar(48)*psi(1) - Scalar(36)*psi(2)
                          + Scalar(16)*psi(3) - Scalar(3)*psi(4) ) * o12 * inv_h;
           dPi(0) = d2_0 - C[0]*d1_0 - A[0]*Pi(0) - V[0]*psi(0);
-          if(has_source) dPi(0) += Q_workspace(0);
+          if(has_separable_source) {
+            dPi(0) += source_time_factor * separable_source_spatial(0);
+          } else if(has_source) dPi(0) += Q_workspace(0);
           dpsi(0) = Pi(0) - kofac * (psi(0) - Scalar(4)*psi(1) + Scalar(6)*psi(2)
                                      - Scalar(4)*psi(3) + psi(4));
         }
@@ -159,7 +191,9 @@ struct TeukolskyPDEPrecise {
           Scalar d1_1 = (-Scalar(3)*psi(0) - Scalar(10)*psi(1) + Scalar(18)*psi(2)
                          - Scalar(6)*psi(3) + psi(4) ) * o12 * inv_h;
           dPi(1) = d2_1 - C[1]*d1_1 - A[1]*Pi(1) - V[1]*psi(1);
-          if(has_source) dPi(1) += Q_workspace(1);
+          if(has_separable_source) {
+            dPi(1) += source_time_factor * separable_source_spatial(1);
+          } else if(has_source) dPi(1) += Q_workspace(1);
           dpsi(1) = Pi(1) - kofac * (psi(0) - Scalar(4)*psi(1) + Scalar(6)*psi(2)
                                      - Scalar(4)*psi(3) + psi(4));
         }
@@ -171,7 +205,9 @@ struct TeukolskyPDEPrecise {
                            + Scalar(10)*psi(grid_size-2) + Scalar(3)*psi(grid_size-1) ) * o12 * inv_h;
           dPi(grid_size-2) = d2_n2 - C[grid_size-2]*d1_n2 - A[grid_size-2]*Pi(grid_size-2)
                              - V[grid_size-2]*psi(grid_size-2);
-          if(has_source) dPi(grid_size-2) += Q_workspace(grid_size-2);
+          if(has_separable_source) {
+            dPi(grid_size-2) += source_time_factor * separable_source_spatial(grid_size-2);
+          } else if(has_source) dPi(grid_size-2) += Q_workspace(grid_size-2);
           dpsi(grid_size-2) = Pi(grid_size-2) - kofac * (psi(grid_size-5) - Scalar(4)*psi(grid_size-4)
                                          + Scalar(6)*psi(grid_size-3) - Scalar(4)*psi(grid_size-2)
                                          + psi(grid_size-1));
@@ -186,7 +222,9 @@ struct TeukolskyPDEPrecise {
                          + Scalar(25)*psi(grid_size-1) ) * o12 * inv_h;
           dPi(grid_size-1) = d2_n1 - C[grid_size-1]*d1_n1 - A[grid_size-1]*Pi(grid_size-1)
                              - V[grid_size-1]*psi(grid_size-1);
-          if(has_source) dPi(grid_size-1) += Q_workspace(grid_size-1);
+          if(has_separable_source) {
+            dPi(grid_size-1) += source_time_factor * separable_source_spatial(grid_size-1);
+          } else if(has_source) dPi(grid_size-1) += Q_workspace(grid_size-1);
           dpsi(grid_size-1) = Pi(grid_size-1) - kofac * (psi(grid_size-5) - Scalar(4)*psi(grid_size-4)
                                          + Scalar(6)*psi(grid_size-3) - Scalar(4)*psi(grid_size-2)
                                          + psi(grid_size-1));
