@@ -40,4 +40,26 @@ The codebase also makes use of `boost` and `Eigen` library, which are included i
 
 Compilation should be as easy as running `make` at the project directory. Note that the compilation could take a while.
 
+## Verification
+
+Run the precise Teukolsky correctness matrix under normal and production flags:
+
+```bash
+make check-precise-correctness
+```
+
+Run the same focused checks with AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```bash
+make check-precise-sanitizers
+```
+
+Build the complete CPU-only application with:
+
+```bash
+make -j6 disable-cuda=true
+```
+
+See `CORRECTNESS_REPORT.md` for the tested parameter matrix and current CUDA and
+performance-test limitations.
 

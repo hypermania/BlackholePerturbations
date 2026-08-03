@@ -15,7 +15,9 @@
 
 #include "Eigen/Dense"
 #include "io.hpp"
+#ifndef DISABLE_CUDA
 #include "cuda_wrapper.cuh"
+#endif
 
 
 template<typename State>
@@ -159,6 +161,7 @@ struct DenseTransformAndRecordObserver {
   }
 };
 
+#ifndef DISABLE_CUDA
 struct ThrustRecorder {
   typedef thrust::device_vector<thrust::complex<double>> State;
   typedef thrust::complex<double> StateScalar;
@@ -178,6 +181,7 @@ struct ThrustRecorder {
     psi_list.insert(psi_list.end(), temporary.begin(), temporary.end());
   }
 };
+#endif
 
 
 struct ApproximateTimeObserver {
@@ -217,6 +221,7 @@ inline void ApproximateTimeObserver::operator()<Eigen::ArrayXcd, double>(const E
   }
 }
   
+#ifndef DISABLE_CUDA
 template<>
 inline void ApproximateTimeObserver::operator()<thrust::device_vector<thrust::complex<double>>, double>(const thrust::device_vector<thrust::complex<double>> &x, const double t) {
   if(current_idx < times.size() && t >= times[current_idx]) {
@@ -225,6 +230,7 @@ inline void ApproximateTimeObserver::operator()<thrust::device_vector<thrust::co
     t_list.push_back(static_cast<double>(t));
   }
 }
+#endif
 
 
 template<typename... Observers>
