@@ -104,9 +104,15 @@ LDFLAGS += $(foreach librarydir,$(program_LIBRARY_DIRS),-L$(librarydir))
 LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 
 
-.PHONY: all clean distclean
+.PHONY: all clean distclean benchmark-precise
 
 all: $(program_NAME)
+
+benchmark-precise: test/benchmark_teukolsky_precise
+
+test/benchmark_teukolsky_precise: test/benchmark_teukolsky_precise.cpp src/teukolsky_precise.hpp
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \
+		-fopenmp $< -lquadmath -o $@
 
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)
@@ -129,6 +135,7 @@ asm: $(program_CXX_ASMS)
 
 clean:
 	$(RM) $(program_NAME)
+	$(RM) test/benchmark_teukolsky_precise
 	$(RM) $(program_OBJS)
 	$(RM) $(program_CXX_ASMS)
 	$(RM) $(wildcard *~)

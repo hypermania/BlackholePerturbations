@@ -324,14 +324,12 @@ void run_teukolsky_precise_eqn(void) {
     r_beta = r_beta.pow(-beta);
     r_beta.head(r_ast_to_i(param.r_min.convert_to<double>(), param.r_max.convert_to<double>(), N, r_source.convert_to<double>())) = 0;
 
-    eqn.Q = [&](const Scalar t)->Vector{
-      Vector result(N+1);
+    eqn.Q = [&](const Scalar &t, Vector &result)->void {
 #pragma omp parallel for schedule(static)
       for(long long int i = 0; i <= N; ++i) {
         Scalar arg = t - r_ast[i] + r_source;
         result[i] = pf * boost::multiprecision::exp(-arg * arg / denom) * r_beta[i];
       }
-      return result;
     };
     
     Vector state = Vector::Zero(2 * (N+1));
@@ -465,17 +463,23 @@ void run_teukolsky_precise_eqn(void) {
     const Scalar sigma = Scalar(1) / Scalar(2);
     const Scalar pf = pow(Scalar(2 * pi), Scalar(-0.5)) / sigma;
     const Scalar denom = Scalar(2) * sigma * sigma;
-    
-    Vector r = eqn.compute_r_vector(r_min, r_max, N, Scalar(2) * M);
 
-    eqn.Q = [&](const Scalar t)->Vector{
-      Vector result(N+1);    
+    Vector spatial_source(N + 1);
+#pragma omp parallel for schedule(static)
+    for(long long int i = 0; i <= N; ++i) {
+      const Scalar radial_offset = r_ast[i] - r_source;
+      spatial_source[i] = pf * boost::multiprecision::exp(
+          -(radial_offset * radial_offset) / denom);
+    }
+
+    eqn.Q = [&](const Scalar &t, Vector &result)->void {
+      const Scalar time_offset = t - r_source;
+      const Scalar time_factor = boost::multiprecision::exp(
+          -(time_offset * time_offset) / denom);
 #pragma omp parallel for schedule(static)
       for(long long int i = 0; i <= N; ++i) {
-        Scalar arg = pow(t - Scalar(10), 2) + pow(r_ast[i] - Scalar(10), 2);
-        result[i] = pf * boost::multiprecision::exp(- arg / denom);
+        result[i] = time_factor * spatial_source[i];
       }
-      return result;
     };
       
     Vector state = Vector::Zero(2 * (N+1));
@@ -498,4 +502,3 @@ void run_teukolsky_precise_eqn(void) {
 
 
 }
-
