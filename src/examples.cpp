@@ -257,19 +257,24 @@ void run_teukolsky_precise_eqn(void) {
   typedef Equation::State State;
   typedef Equation::Vector Vector;
 
-  auto run_simulation = [](const long long int l, const long long int s, const Scalar ko_epsilon, const Scalar t_end)->void {
-    std::string format_string = "output/teukolsky_precise/l_%d_s_%d/";
-      
+  auto run_simulation = [](const long long int l, const long long int s, const long long int beta100, const Scalar ko_epsilon, const Scalar t_end)->void {
+    // std::string format_string = "output/teukolsky_precise_far/l_%d_s_%d_beta100_%d/";
+    std::string format_string = "output/teukolsky_precise/l_%d_s_%d_beta100_%d/";
+
+
     char dir_buffer[128];
-    sprintf(dir_buffer, format_string.data(), static_cast<int>(l), static_cast<int>(s));
+    sprintf(dir_buffer, format_string.data(), static_cast<int>(l), static_cast<int>(s), static_cast<int>(beta100));
     const std::string dir(dir_buffer);
     prepare_directory_for_output(dir);  
-  
+
+    const Scalar beta = beta100 / Scalar(100);
     const Scalar M = Scalar(1) / Scalar(2);
 
-    const Scalar r_min = -750;
-    const Scalar r_max =  1500;
-    const long long int N = static_cast<long long int>((r_max - r_min) / 0.15);
+    const Scalar r_min = -500;
+    const Scalar r_max =  1000;
+    // const Scalar r_min = 0;
+    // const Scalar r_max =  1500;
+    const long long int N = static_cast<long long int>((r_max - r_min) / 0.03);
 
     const Scalar t_start = 0;
     const Scalar delta_t = 0.01;
@@ -291,7 +296,9 @@ void run_teukolsky_precise_eqn(void) {
   
     Equation eqn(param);
   
-    auto stepper = runge_kutta_fehlberg78<State, Scalar, State, Scalar>();
+    // auto stepper = runge_kutta_fehlberg78<State, Scalar, State, Scalar>();
+    auto stepper = runge_kutta_dopri5<State, Scalar, State, Scalar>();
+    //auto stepper = runge_kutta4_classic<State, Scalar, State, Scalar>();
     
     const long long int rIdx = r_ast_to_i(param.r_min.convert_to<double>(), param.r_max.convert_to<double>(), N, 50.0);
     auto observer1 = FixedPositionObserver(dir, {rIdx, rIdx + (N+1)});
@@ -303,20 +310,170 @@ void run_teukolsky_precise_eqn(void) {
     auto observer2 = ApproximateTimeObserver(dir, snap_times);
     auto observer = ObserverPack(observer1, observer2);
 
-    // Outgoing Gaussian source at r_* = 50
+    // Outgoing Gaussian source at r_* = 10
     Vector r_ast = eqn.compute_r_ast_vector(r_min, r_max, N);
       
-    const Scalar r_source = Scalar(50);
+    const Scalar r_source = Scalar(10);
+    // const Scalar r_source = Scalar(500);
     const Scalar sigma = Scalar(1) / Scalar(2);
     const Scalar pf = pow(Scalar(2 * pi), Scalar(-0.5)) / sigma;
     const Scalar denom = Scalar(2) * sigma * sigma;
+    
+    Vector r = eqn.compute_r_vector(r_min, r_max, N, Scalar(2) * M);
+    Vector r_beta = r;
+    r_beta = r_beta.pow(-beta);
+    r_beta.head(r_ast_to_i(param.r_min.convert_to<double>(), param.r_max.convert_to<double>(), N, r_source.convert_to<double>())) = 0;
 
     eqn.Q = [&](const Scalar t)->Vector{
       Vector result(N+1);
 #pragma omp parallel for schedule(static)
       for(long long int i = 0; i <= N; ++i) {
         Scalar arg = t - r_ast[i] + r_source;
-        result[i] = pf * boost::multiprecision::exp(-arg * arg / denom);
+        result[i] = pf * boost::multiprecision::exp(-arg * arg / denom) * r_beta[i];
+      }
+      return result;
+    };
+    
+    Vector state = Vector::Zero(2 * (N+1));
+      
+    run_and_measure_time("Solving Teukolsky precise equation",
+			 [&](){
+			   int num_steps = integrate_const(stepper, std::ref(eqn), state, t_start, t_end, delta_t, std::ref(observer));
+			   std::cout << "total number of steps = " << num_steps << '\n';
+			 } );
+    observer.save();
+  };
+
+  // run_simulation(1, -1, 190, Scalar("0.7"), Scalar(1000));
+  // run_simulation(1, -1, 180, Scalar("0.7"), Scalar(1000));
+  // run_simulation(1, -1, 170, Scalar("0.7"), Scalar(1000));
+  // run_simulation(1, -1, 160, Scalar("0.7"), Scalar(1000));
+  // run_simulation(1, -1, 150, Scalar("0.7"), Scalar(1000));
+
+  // run_simulation(2, -1, 200, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 199, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 198, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 197, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 196, Scalar("0.7"), Scalar(1000));
+
+  // run_simulation(2, -1, 300, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 280, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 260, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 240, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 230, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 220, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 210, Scalar("0.7"), Scalar(1000));
+
+  // run_simulation(2, -1, 200, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 180, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 220, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 240, Scalar("0.7"), Scalar(1000));
+  
+  run_simulation(2, -2, 195, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 199, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 220, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 240, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 260, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 280, Scalar("0.7"), Scalar(1000));
+
+  
+  // run_simulation(2, -1, 195, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 190, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 180, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 170, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 160, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -1, 150, Scalar("0.7"), Scalar(1000));
+  return;
+  
+  // Low-ℓ tail runs
+  // run_simulation(1, -1, 2, Scalar("0.5"), Scalar(1000));
+  // run_simulation(1, -1, 3, Scalar("0.5"), Scalar(1000));
+  // run_simulation(1, -1, 0, Scalar("0.5"), Scalar(1000));
+  // run_simulation(1, -1, 1, Scalar("0.5"), Scalar(1000));
+
+  // run_simulation(2, -1, 0, Scalar("0.5"), Scalar(1000));
+  // run_simulation(2, -1, 1, Scalar("0.5"), Scalar(1000));
+  // run_simulation(2, -1, 2, Scalar("0.5"), Scalar(1000));
+  // run_simulation(2, -1, 3, Scalar("0.5"), Scalar(1000));
+
+  //run_simulation(2, -2, 0, Scalar("0.7"), Scalar(1000));
+  //run_simulation(2, -2, 1, Scalar("0.7"), Scalar(1000));
+  //run_simulation(2, -2, 2, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 3, Scalar("0.7"), Scalar(1000));
+
+  // run_simulation(3, -2, 2, Scalar("0.7"), Scalar(1000));
+    
+  
+  // run_simulation(1, -1, Scalar("0.5"), Scalar(500));
+  // run_simulation(3, -1, Scalar("0.5"), Scalar(500));
+  // run_simulation(2, -2, Scalar("0.7"), Scalar(500));
+  // run_simulation(3, -2, Scalar("0.7"), Scalar(500));
+
+
+  auto run_dirac_simulation = [](const long long int l, const long long int s, const Scalar ko_epsilon, const Scalar t_end)->void {
+    std::string format_string = "output/teukolsky_precise_dirac/l_%d_s_%d/";
+      
+    char dir_buffer[128];
+    sprintf(dir_buffer, format_string.data(), static_cast<int>(l), static_cast<int>(s));
+    const std::string dir(dir_buffer);
+    prepare_directory_for_output(dir);  
+  
+    const Scalar M = Scalar(1) / Scalar(2);
+
+    const Scalar r_min = -500;
+    const Scalar r_max =  1000;
+    const long long int N = static_cast<long long int>((r_max - r_min) / 0.03);
+
+    const Scalar t_start = 0;
+    const Scalar delta_t = 0.01;
+
+    Param param;
+    param.s = s;
+    param.l = l;
+    param.M = M;
+    param.r_min = r_min;
+    param.r_max = r_max;
+    param.N = N;
+    param.ko_epsilon = ko_epsilon;
+    param.t_start = t_start;
+    param.t_end = t_end;
+    param.t_interval = Scalar(1) / Scalar(2);
+    param.delta_t = delta_t;
+
+    save_param_for_Mathematica(param, dir);
+  
+    Equation eqn(param);
+  
+    // auto stepper = runge_kutta_fehlberg78<State, Scalar, State, Scalar>();
+    auto stepper = runge_kutta_dopri5<State, Scalar, State, Scalar>();
+    //auto stepper = runge_kutta4_classic<State, Scalar, State, Scalar>();
+    
+    const long long int rIdx = r_ast_to_i(param.r_min.convert_to<double>(), param.r_max.convert_to<double>(), N, 50.0);
+    auto observer1 = FixedPositionObserver(dir, {rIdx, rIdx + (N+1)});
+
+    // Snapshots every 50 time units
+    std::vector<double> snap_times;
+    int n_snaps = static_cast<int>(static_cast<double>(t_end) / 50.0 + 1);
+    for(int i = 0; i < n_snaps; ++i) snap_times.push_back(50.0 * i);
+    auto observer2 = ApproximateTimeObserver(dir, snap_times);
+    auto observer = ObserverPack(observer1, observer2);
+
+    // Outgoing Gaussian source at r_* = 10
+    Vector r_ast = eqn.compute_r_ast_vector(r_min, r_max, N);
+      
+    const Scalar r_source = Scalar(10);
+    const Scalar sigma = Scalar(1) / Scalar(2);
+    const Scalar pf = pow(Scalar(2 * pi), Scalar(-0.5)) / sigma;
+    const Scalar denom = Scalar(2) * sigma * sigma;
+    
+    Vector r = eqn.compute_r_vector(r_min, r_max, N, Scalar(2) * M);
+
+    eqn.Q = [&](const Scalar t)->Vector{
+      Vector result(N+1);    
+#pragma omp parallel for schedule(static)
+      for(long long int i = 0; i <= N; ++i) {
+        Scalar arg = pow(t - Scalar(10), 2) + pow(r_ast[i] - Scalar(10), 2);
+        result[i] = pf * boost::multiprecision::exp(- arg / denom);
       }
       return result;
     };
@@ -325,17 +482,20 @@ void run_teukolsky_precise_eqn(void) {
       
     run_and_measure_time("Solving Teukolsky precise equation",
 			 [&](){
-			   int num_steps = integrate_adaptive(stepper, std::ref(eqn), state, t_start, t_end, delta_t, std::ref(observer));
+			   int num_steps = integrate_const(stepper, std::ref(eqn), state, t_start, t_end, delta_t, std::ref(observer));
 			   std::cout << "total number of steps = " << num_steps << '\n';
 			 } );
     observer.save();
   };
 
-  // Low-ℓ tail runs
-  run_simulation(1, -1, Scalar("0.5"), Scalar(500));
-  run_simulation(2, -1, Scalar("0.5"), Scalar(500));
-  run_simulation(3, -1, Scalar("0.5"), Scalar(500));
-  run_simulation(2, -2, Scalar("0.7"), Scalar(500));
-  run_simulation(3, -2, Scalar("0.7"), Scalar(500));
+  run_dirac_simulation(1, -1, Scalar("0.7"), Scalar(1000));
+  run_dirac_simulation(2, -1, Scalar("0.7"), Scalar(1000));
+  run_dirac_simulation(2, -2, Scalar("0.7"), Scalar(1000));
+  run_dirac_simulation(3, -2, Scalar("0.7"), Scalar(1000));
+  
+  run_dirac_simulation(3, -1, Scalar("0.7"), Scalar(1000));
+  // run_dirac_simulation(0, 0, Scalar("0.7"), Scalar(1000));
+
+
 }
 
