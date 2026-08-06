@@ -35,7 +35,8 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1) const
 	  {
-	    v0 = m_alpha1 * v1;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i) v0[i] = m_alpha1 * v1[i];
 	  }
 	};
 
@@ -50,7 +51,9 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i];
 	  }
 	};
 
@@ -67,7 +70,9 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2 + m_alpha3 * v3;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i];
 	  }
 	};
 
@@ -86,7 +91,9 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2 + m_alpha3 * v3 + m_alpha4 * v4;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i] + m_alpha4 * v4[i];
 	  }
 	};
 
@@ -106,7 +113,10 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4, const State &v5) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2 + m_alpha3 * v3 + m_alpha4 * v4 + m_alpha5 * v5;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
+	              + m_alpha4 * v4[i] + m_alpha5 * v5[i];
 	  }
 	};
 
@@ -127,7 +137,10 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4, const State &v5, const State &v6) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2 + m_alpha3 * v3 + m_alpha4 * v4 + m_alpha5 * v5 + m_alpha6 * v6;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
+	              + m_alpha4 * v4[i] + m_alpha5 * v5[i] + m_alpha6 * v6[i];
 	  }
 	};
 
@@ -149,7 +162,11 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4, const State &v5, const State &v6, const State &v7) const
 	  {
-	    v0 = m_alpha1 * v1 + m_alpha2 * v2 + m_alpha3 * v3 + m_alpha4 * v4 + m_alpha5 * v5 + m_alpha6 * v6 + m_alpha7 * v7;
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	    for(Eigen::Index i = 0; i < v0.size(); ++i)
+	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
+	              + m_alpha4 * v4[i] + m_alpha5 * v5[i] + m_alpha6 * v6[i]
+	              + m_alpha7 * v7[i];
 	  }
 	};
 

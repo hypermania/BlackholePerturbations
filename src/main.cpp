@@ -29,17 +29,21 @@
 #include "boost/type_index.hpp"
 
 #include "teukolsky_scalar.hpp"
+#ifndef DISABLE_CUDA
 #include "teukolsky_cubic_cuda.cuh"
 #include "teukolsky_source_cuda.cuh"
+#endif
 
 #include "examples.hpp"
 #include "rsh.hpp"
 #include "sph.hpp"
 
+#ifndef DISABLE_CUDA
 #include <thrust/device_vector.h>
 #include "cuda_wrapper.cuh"
 #include "odeint_thrust/thrust.hpp"
 #include "pde_cuda_kernel.cuh"
+#endif
 #include "asset.hpp"
 
 //void test_teukolsky(void);
@@ -83,6 +87,7 @@ int main(int argc, char **argv) {
   // return 0;
   // test_harmonic_mult();
 
+#ifndef DISABLE_CUDA
   auto run_teukolsky_sourced = [&](const long long int s, const long long int beta, const long long int lm_source, const double a_over_M, const std::string &dir) {
     using namespace Eigen;
     using namespace boost::numeric::odeint;
@@ -508,6 +513,7 @@ int main(int argc, char **argv) {
 
   // run_teukolsky_cubic(0, 0.01, 0.1, 0, "output/teukolsky_a_001_lambda_01/");
   // run_teukolsky_cubic(0, 0.9, 0.01, 0, "output/teukolsky_a_09_lambda_001/");
+#endif
   run_teukolsky_precise_eqn();
   
   // run_teukolsky_cubic(-1, 0.1, 0, 0.6, "output/teukolsky_s_1_a_01_lambda_0_eps_06/");
