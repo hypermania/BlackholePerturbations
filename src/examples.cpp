@@ -367,12 +367,15 @@ void run_teukolsky_precise_eqn(void) {
   // run_simulation(2, -1, 220, Scalar("0.7"), Scalar(1000));
   // run_simulation(2, -1, 240, Scalar("0.7"), Scalar(1000));
   
-  run_simulation(2, -2, 195, Scalar("0.7"), Scalar(1000));
-  run_simulation(2, -2, 199, Scalar("0.7"), Scalar(1000));
-  run_simulation(2, -2, 220, Scalar("0.7"), Scalar(1000));
-  run_simulation(2, -2, 240, Scalar("0.7"), Scalar(1000));
-  run_simulation(2, -2, 260, Scalar("0.7"), Scalar(1000));
-  run_simulation(2, -2, 280, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 195, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 199, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 220, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 240, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 260, Scalar("0.7"), Scalar(1000));
+  // run_simulation(2, -2, 280, Scalar("0.7"), Scalar(1000));
+
+  run_simulation(1, -1, 400, Scalar("0.7"), Scalar(1000));
+  run_simulation(2, -2, 400, Scalar("0.7"), Scalar(1000));
 
   
   // run_simulation(2, -1, 195, Scalar("0.7"), Scalar(1000));
