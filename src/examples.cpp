@@ -15,10 +15,14 @@
 #include "io.hpp"
 #include "observer.hpp"
 #include "regge_wheeler_precise.hpp"
+#include "sds_precise.hpp"
 #include "teukolsky_precise.hpp"
 #include "cubic_scalar.hpp"
 
 #include "boost/type_index.hpp"
+
+#include <fstream>
+#include <iomanip>
 
 
 /*! 
@@ -501,4 +505,135 @@ void run_teukolsky_precise_eqn(void) {
   // run_dirac_simulation(0, 0, Scalar("0.7"), Scalar(1000));
 
 
+}
+
+
+/*!
+  \brief Solve one sourced Schwarzschild-de Sitter master equation.
+
+  The configuration block below selects the spin, multipole, cosmological
+  constant, source profile, and waveform. Evolution and source evaluation use
+  binary128; observers intentionally save double arrays, matching the existing
+  precise runners.
+*/
+void run_sds_precise_eqn(void) {
+  using namespace boost::numeric::odeint;
+
+  typedef SdSMasterPDEPrecise Equation;
+  typedef SdSMasterPDEPreciseParam Param;
+  typedef Equation::Scalar Scalar;
+  typedef Equation::State State;
+
+  // Production configuration.
+  const long long int s = 0;
+  const long long int l = 1;
+  const Scalar M("0.5");
+  const Scalar Lambda("1e-4");
+  const Scalar beta(2);
+  const SdSSourceProfile profile = SdSSourceProfile::TortoisePower;
+  const SdSWaveform waveform = SdSWaveform::Gaussian;
+
+  const Scalar r_min(-500);
+  const Scalar r_max(1000);
+  const long long int N = static_cast<long long int>(
+      ((r_max - r_min) / Scalar("0.03")).convert_to<long long int>());
+  const Scalar t_start(0);
+  const Scalar t_end(1000);
+  const Scalar delta_t("0.01");
+
+  const std::string dir = std::string("output/sds_precise/")
+      + sds_source_profile_name(profile) + "/";
+  prepare_directory_for_output(dir);
+
+  Param param;
+  param.s = s;
+  param.l = l;
+  param.M = M;
+  param.Lambda = Lambda;
+  param.r_min = r_min;
+  param.r_max = r_max;
+  param.N = N;
+  param.t_start = t_start;
+  param.t_end = t_end;
+  param.t_interval = Scalar("0.5");
+  param.delta_t = delta_t;
+  save_param_for_Mathematica(param, dir);
+
+  Equation equation(param);
+  SdSTranslatedSourceParam source;
+  source.profile = profile;
+  source.waveform = waveform;
+  source.beta = beta;
+  source.amplitude = 1;
+  source.u_center = -10;
+  source.sigma = Scalar("0.5");
+  source.onset_time = t_start;
+  source.cutoff_sigma = 12;
+  source.L = 1;
+  source.x0 = 100;
+  source.X0 = 0;
+  source.X1 = 20;
+  equation.set_translated_gaussian_source(source);
+
+  const double observer_x = 50.0;
+  const long long int observer_index = r_ast_to_i(
+      param.r_min.convert_to<double>(), param.r_max.convert_to<double>(), N,
+      observer_x);
+  auto fixed_observer = FixedPositionObserver(
+      dir, {observer_index, observer_index + N + 1});
+
+  std::vector<double> snapshot_times;
+  const int snapshot_count = static_cast<int>(t_end.convert_to<double>() / 50.0)
+                             + 1;
+  for(int i = 0; i < snapshot_count; ++i) {
+    snapshot_times.push_back(50.0 * i);
+  }
+  auto snapshot_observer = ApproximateTimeObserver(dir, snapshot_times);
+  auto observer = ObserverPack(fixed_observer, snapshot_observer);
+
+  const Scalar effective_u_min = source.u_center
+                                 - source.cutoff_sigma * source.sigma;
+  const Scalar finite_domain_limit = Scalar(2) * r_max - Scalar(observer_x)
+                                     + effective_u_min;
+  {
+    std::ofstream metadata(dir + "source_and_geometry.txt");
+    metadata << std::setprecision(36)
+             << "profile " << sds_source_profile_name(profile) << '\n'
+             << "waveform " << sds_waveform_name(waveform) << '\n'
+             << "beta " << beta << '\n'
+             << "amplitude " << source.amplitude << '\n'
+             << "u_center " << source.u_center << '\n'
+             << "sigma " << source.sigma << '\n'
+             << "onset_time " << source.onset_time << '\n'
+             << "cutoff_sigma " << source.cutoff_sigma << '\n'
+             << "L " << source.L << '\n'
+             << "x0 " << source.x0 << '\n'
+             << "X0 " << source.X0 << '\n'
+             << "X1 " << source.X1 << '\n'
+             << "r_black_hole " << equation.r_black_hole << '\n'
+             << "r_cosmological " << equation.r_cosmological << '\n'
+             << "r_negative " << equation.r_negative << '\n'
+             << "kappa_black_hole " << equation.kappa_black_hole << '\n'
+             << "kappa_cosmological " << equation.kappa_cosmological << '\n'
+             << "tortoise_convention x(3M)=3M+2M*log(1/2)\n"
+             << "observer_x " << observer_x << '\n'
+             << "effective_u_min " << effective_u_min << '\n'
+             << "finite_domain_fit_limit " << finite_domain_limit << '\n';
+  }
+
+  if(t_end >= finite_domain_limit) {
+    std::cerr << "Warning: t_end reaches the conservative finite-domain "
+                 "contamination bound t < " << finite_domain_limit << '\n';
+  }
+
+  State state = State::Zero(2 * (N + 1));
+  auto stepper = runge_kutta_dopri5<State, Scalar, State, Scalar>();
+  run_and_measure_time("Solving precise sourced SdS equation", [&]() {
+    const int steps = integrate_const(
+        stepper, std::ref(equation), state, t_start, t_end, delta_t,
+        std::ref(observer));
+    std::cout << "total number of steps = " << steps << '\n';
+  });
+  fixed_observer.save();
+  snapshot_observer.save();
 }

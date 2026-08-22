@@ -104,18 +104,31 @@ LDFLAGS += $(foreach librarydir,$(program_LIBRARY_DIRS),-L$(librarydir))
 LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 
 
-.PHONY: all clean distclean benchmark-precise check-precise-performance \
-	check-precise-correctness check-precise-sanitizers
+.PHONY: all clean distclean benchmark-precise benchmark-sds-precise \
+	check-precise-performance check-precise-correctness \
+	check-precise-sanitizers check-sds-precise-performance \
+	check-sds-precise-correctness check-sds-precise-sanitizers
 
 all: $(program_NAME)
 
 benchmark-precise: test/benchmark_teukolsky_precise
 
+benchmark-sds-precise: test/benchmark_sds_precise
+
 check-precise-performance: benchmark-precise
 	OMP_PROC_BIND=close OMP_PLACES=cores OMP_WAIT_POLICY=active \
 		./test/benchmark_teukolsky_precise 50000 60 6
 
+check-sds-precise-performance: benchmark-sds-precise
+	OMP_PROC_BIND=close OMP_PLACES=cores OMP_WAIT_POLICY=active \
+		./test/benchmark_sds_precise 50000 180 6
+
 test/benchmark_teukolsky_precise: test/benchmark_teukolsky_precise.cpp src/teukolsky_precise.hpp
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \
+		-fopenmp $< -lquadmath -o $@
+
+test/benchmark_sds_precise: test/benchmark_sds_precise.cpp src/sds_precise.hpp \
+		src/odeint_eigen/eigen_operations.hpp
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \
 		-fopenmp $< -lquadmath -o $@
 
@@ -129,6 +142,11 @@ test/test_eigen_scale_sums: test/test_eigen_scale_sums.cpp \
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O2 -Wall -Wextra \
 		-fopenmp $< -lquadmath -o $@
 
+test/test_sds_precise_correctness: test/test_sds_precise_correctness.cpp \
+		src/sds_precise.hpp src/odeint_eigen/eigen_operations.hpp
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O2 -Wall -Wextra \
+		-fopenmp $< -lquadmath -o $@
+
 test/test_teukolsky_precise_correctness_prod: test/test_teukolsky_precise_correctness.cpp \
 		src/teukolsky_precise.hpp src/odeint_eigen/eigen_operations.hpp
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -ffast-math -DNDEBUG \
@@ -139,6 +157,11 @@ test/test_eigen_scale_sums_prod: test/test_eigen_scale_sums.cpp \
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -ffast-math -DNDEBUG \
 		-Wall -Wextra -fopenmp $< -lquadmath -o $@
 
+test/test_sds_precise_correctness_prod: test/test_sds_precise_correctness.cpp \
+		src/sds_precise.hpp src/odeint_eigen/eigen_operations.hpp
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -ffast-math -DNDEBUG \
+		-Wall -Wextra -fopenmp $< -lquadmath -o $@
+
 check-precise-correctness: test/test_teukolsky_precise_correctness \
 		test/test_eigen_scale_sums test/test_teukolsky_precise_correctness_prod \
 		test/test_eigen_scale_sums_prod
@@ -146,6 +169,11 @@ check-precise-correctness: test/test_teukolsky_precise_correctness \
 	OMP_PROC_BIND=close OMP_PLACES=cores ./test/test_eigen_scale_sums
 	OMP_PROC_BIND=close OMP_PLACES=cores ./test/test_teukolsky_precise_correctness_prod
 	OMP_PROC_BIND=close OMP_PLACES=cores ./test/test_eigen_scale_sums_prod
+
+check-sds-precise-correctness: test/test_sds_precise_correctness \
+		test/test_sds_precise_correctness_prod
+	OMP_PROC_BIND=close OMP_PLACES=cores ./test/test_sds_precise_correctness
+	OMP_PROC_BIND=close OMP_PLACES=cores ./test/test_sds_precise_correctness_prod
 
 check-precise-sanitizers:
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O1 -g -Wall -Wextra \
@@ -159,6 +187,15 @@ check-precise-sanitizers:
 		./test/test_teukolsky_precise_correctness_san
 	OMP_NUM_THREADS=2 OMP_PROC_BIND=close OMP_PLACES=cores \
 		./test/test_eigen_scale_sums_san
+
+check-sds-precise-sanitizers:
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O1 -g -Wall -Wextra \
+		-fopenmp -DSDS_SKIP_2000_DIGIT_REFERENCE \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		test/test_sds_precise_correctness.cpp -lquadmath \
+		-o test/test_sds_precise_correctness_san
+	OMP_NUM_THREADS=2 OMP_PROC_BIND=close OMP_PLACES=cores \
+		./test/test_sds_precise_correctness_san
 
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)
@@ -182,9 +219,12 @@ asm: $(program_CXX_ASMS)
 clean:
 	$(RM) $(program_NAME)
 	$(RM) test/benchmark_teukolsky_precise
+	$(RM) test/benchmark_sds_precise
 	$(RM) test/test_teukolsky_precise_correctness test/test_eigen_scale_sums
+	$(RM) test/test_sds_precise_correctness test/test_sds_precise_correctness_prod
 	$(RM) test/test_teukolsky_precise_correctness_prod test/test_eigen_scale_sums_prod
 	$(RM) test/test_teukolsky_precise_correctness_san test/test_eigen_scale_sums_san
+	$(RM) test/test_sds_precise_correctness_san
 	$(RM) $(program_OBJS)
 	$(RM) $(program_CXX_ASMS)
 	$(RM) $(wildcard *~)
