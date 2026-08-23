@@ -81,6 +81,20 @@ int main(int argc, char **argv) {
     run_sds_precise_eqn();
     return 0;
   }
+  if(argc >= 2 && std::string(argv[1]) == "--sds-areal-scan") {
+    if(argc != 5) {
+      std::cerr << "Usage: " << argv[0]
+                << " --sds-areal-scan Q L BETA\n";
+      return 2;
+    }
+    try {
+      run_sds_areal_scan(argv[2], std::stoll(argv[3]), std::stoll(argv[4]));
+    } catch(const std::exception &error) {
+      std::cerr << "SdS areal scan failed: " << error.what() << '\n';
+      return 1;
+    }
+    return 0;
+  }
   // const long long int l_max = 5;
   // const long long int lm_size = (l_max + 1) * (l_max + 1);
   // SPH::CouplingInfo info = SPH::make_coupling_info_map(l_max, {0, 6, 20, 42, 72, 110});

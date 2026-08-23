@@ -1,6 +1,8 @@
 output/*
 main
 **/*.o
+**/__pycache__/
+*.pyc
 /test/benchmark_teukolsky_precise
 /test/test_teukolsky_precise_correctness
 /test/test_eigen_scale_sums

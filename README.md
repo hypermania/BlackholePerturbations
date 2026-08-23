@@ -97,5 +97,28 @@ make check-sds-precise-performance
 See `SDS_PRECISE_REPORT.md` for the numerical design, validation matrix, and
 current scope.
 
+Run one member of the sourced SdS areal-radius scan with
+
+```bash
+./main --sds-areal-scan 0.1 0 0
+python3 script/analyze_sds_areal_scan.py \
+  output/sds_areal_scan/q_01_l_0_beta_0
+```
+
+The three arguments are $`q=9\Lambda M^2`$, $`\ell`$, and $`\beta`$.
+The runner accepts the scan values $`q\in\{0.1,0.2,0.4,0.8\}`$,
+$`\ell\in\{0,1,2,3\}`$, and $`\beta\in\{0,1,2\}`$. One complete set of
+time series, snapshots, geometry metadata, fitted instantaneous slopes, and
+figures is stored in its `output/sds_areal_scan/q_XX_l_L_beta_B/` directory.
+The analysis fits
+
+$`p_{\rm loc}=d\ln|\psi|/d\ln t=t\Pi/\psi=a+b/(t-c)`$
+
+and reports the signed tail power $`a`$. Run its focused synthetic check with
+
+```bash
+make check-sds-areal-analysis
+```
+
 See `CORRECTNESS_REPORT.md` for the tested parameter matrix and current CUDA and
 performance-test limitations.

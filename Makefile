@@ -107,7 +107,8 @@ LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 .PHONY: all clean distclean benchmark-precise benchmark-sds-precise \
 	check-precise-performance check-precise-correctness \
 	check-precise-sanitizers check-sds-precise-performance \
-	check-sds-precise-correctness check-sds-precise-sanitizers
+	check-sds-precise-correctness check-sds-precise-sanitizers \
+	check-sds-areal-analysis
 
 all: $(program_NAME)
 
@@ -196,6 +197,9 @@ check-sds-precise-sanitizers:
 		-o test/test_sds_precise_correctness_san
 	OMP_NUM_THREADS=2 OMP_PROC_BIND=close OMP_PLACES=cores \
 		./test/test_sds_precise_correctness_san
+
+check-sds-areal-analysis:
+	python3 test/test_analyze_sds_areal_scan.py
 
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)
