@@ -1,5 +1,47 @@
 # Progress log
 
+## 2026-08-23: Precise SdS evolution optimization
+
+Commit: `c830b75`
+
+### Problems encountered
+
+- The 50,001-point areal-source pilot took 5435.98 seconds, even though the
+  spatial SdS operator was already at its paired attainable ceiling. Profiling
+  showed that Dopri5 repeatedly multiplied the full binary128 base state by an
+  exact coefficient of one in six stage combinations.
+- A direct removal of those multiplications was not bitwise identical under
+  the production `-ffast-math` flags because GCC reassociated the six-term
+  expression. Independent long wall-clock samples also varied noticeably on
+  the virtualized host.
+- The VPS reports an AMD virtual CPU, but `-march=native` was slightly slower
+  than the established `-march=alderlake` setting for this software-binary128
+  workload.
+
+### Solutions
+
+- Added binary128-only unit-coefficient paths to the shared Odeint/Eigen stage
+  operations. The six-input path reproduces the former libgcc binary128
+  addition tree exactly while omitting only multiplication by one.
+- Added a frozen pre-optimization operations policy and seeded randomized
+  full-profile tests over three `(q, l, beta)` cases. The complete right-hand
+  side and every component after each of 40 Dopri5 steps are bitwise identical.
+- Paired production and minimum-kernel ceiling calls in five-call blocks and
+  compared old/new Dopri5 steps adjacently using wall and process CPU time. The
+  homogeneous and sourced RHS reach 100.5% and 100.3% of their paired ceilings;
+  the sourced step improves from 53.26 ms to 45.40 ms, or 1.173 times.
+- Retained `-march=alderlake` after the direct compiler-target comparison.
+
+### How to avoid these problems
+
+- Profile the complete time step, not only the PDE right-hand side, before
+  attributing a long run to source or stencil evaluation.
+- Compare optimized and frozen expressions under the exact production flags;
+  algebraic equivalence does not guarantee bitwise identity with fast-math.
+- Use adjacent paired samples and process CPU time on this shared VPS, and
+  benchmark compiler targets instead of inferring the best target from the
+  virtual CPU label.
+
 ## 2026-08-23: SdS areal-source scan pilot
 
 Commit: `a83d9ce`
