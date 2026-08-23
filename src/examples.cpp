@@ -28,6 +28,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <omp.h>
 
 
 /*! 
@@ -706,6 +707,8 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
                         const long long int beta) {
   using namespace boost::numeric::odeint;
 
+  omp_set_dynamic(0);
+
   using Equation = SdSMasterPDEPrecise;
   using Param = SdSMasterPDEPreciseParam;
   using Scalar = Equation::Scalar;
@@ -813,6 +816,7 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
              << "t_start " << t_start << '\n'
              << "t_end " << t_end << '\n'
              << "delta_t " << delta_t << '\n'
+             << "openmp_threads " << omp_get_max_threads() << '\n'
              << "source_profile "
              << sds_source_profile_name(source.profile) << '\n'
              << "source_waveform " << sds_waveform_name(source.waveform)

@@ -95,7 +95,9 @@ make check-sds-precise-performance
 ```
 
 See `SDS_PRECISE_REPORT.md` for the numerical design, validation matrix, and
-current scope.
+current scope. See `SDS_OPTIMIZATION_REPORT.md` for the paired attainable
+ceiling, Dopri5 stage optimization, timing results, and randomized
+full-profile equivalence test.
 
 Run one member of the sourced SdS areal-radius scan with
 

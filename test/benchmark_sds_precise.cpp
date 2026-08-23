@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -23,6 +24,13 @@ using Scalar = Equation::Scalar;
 using State = Equation::State;
 using Vector = Equation::Vector;
 
+double process_cpu_seconds() {
+  timespec time;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
+  return static_cast<double>(time.tv_sec)
+         + static_cast<double>(time.tv_nsec) * 1e-9;
+}
+
 double median(std::vector<double> samples) {
   std::sort(samples.begin(), samples.end());
   return samples[samples.size() / 2];
@@ -30,10 +38,10 @@ double median(std::vector<double> samples) {
 
 Param make_param(const long long int n) {
   Param param;
-  param.s = 2;
-  param.l = 2;
+  param.s = 0;
+  param.l = 0;
   param.M = Scalar("0.5");
-  param.Lambda = Scalar("1e-4");
+  param.Lambda = Scalar("0.0444444444444444444444444444444444");
   param.r_min = -500;
   param.r_max = 1000;
   param.N = n;
@@ -68,7 +76,6 @@ void ceiling_rhs(const Equation &equation, const State &state,
   const Scalar near_factor = Scalar(16) * d2_factor;
   const Scalar far_factor = -d2_factor;
   const Scalar center_coefficient = -Scalar(30) * d2_factor;
-  const Scalar d1_factor = equation.inv_h / Scalar(12);
   if(equation.Q) equation.Q(time, source_workspace);
   const Scalar *__restrict__ source = source_workspace.data();
 
@@ -81,35 +88,11 @@ void ceiling_rhs(const Equation &equation, const State &state,
     dpsi[i] = pi[i];
   }
 
-  dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
-            - Scalar(36) * pi[2] + Scalar(16) * pi[3]
-            - Scalar(3) * pi[4]) * d1_factor
-           - potential[0] * psi[0] + source[0];
-  dpsi[0] = pi[0];
-  dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
-            + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
-           * d2_factor - potential[1] * psi[1] + source[1];
-  dpsi[1] = pi[1];
-
-  const long long int n2 = grid_size - 2;
-  const long long int n1 = grid_size - 1;
-  dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
-             + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
-             + Scalar(11) * psi[n1]) * d2_factor
-            - potential[n2] * psi[n2] + source[n2];
-  dpsi[n2] = pi[n2];
-  dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
-             + Scalar(16) * pi[grid_size - 4]
-             - Scalar(36) * pi[grid_size - 3] + Scalar(48) * pi[n2]
-             - Scalar(25) * pi[n1]) * d1_factor
-            - potential[n1] * psi[n1] + source[n1];
-  dpsi[n1] = pi[n1];
 }
 
 double run_ceiling(const Equation &equation, const State &state,
                    State &derivative, const int iterations,
-                   const Scalar &time) {
-  Vector source_workspace = Vector::Zero(equation.grid_size);
+                   const Scalar &time, Vector &source_workspace) {
   ceiling_rhs(equation, state, derivative, time, source_workspace);
   const auto start = std::chrono::steady_clock::now();
   for(int iteration = 0; iteration < iterations; ++iteration) {
@@ -119,26 +102,79 @@ double run_ceiling(const Equation &equation, const State &state,
       .count();
 }
 
-std::pair<double, State> run_dopri5_steps(Equation &equation,
-                                          const State &initial_state,
-                                          const int threads,
-                                          const int steps) {
+std::pair<double, double> run_paired_rhs(
+    Equation &equation, const State &state, State &derivative,
+    const int iterations, const Scalar &time, const bool operator_first) {
+  constexpr int target_block_size = 5;
+  const int blocks = std::max(1, (iterations + target_block_size - 1)
+                                  / target_block_size);
+  const int base_iterations = iterations / blocks;
+  const int extra_iterations = iterations % blocks;
+  Vector ceiling_source = Vector::Zero(equation.grid_size);
+  double operator_seconds = 0;
+  double ceiling_seconds = 0;
+  for(int block = 0; block < blocks; ++block) {
+    const int block_iterations = base_iterations
+                                 + (block < extra_iterations ? 1 : 0);
+    const bool production_then_ceiling = operator_first == (block % 2 == 0);
+    if(production_then_ceiling) {
+      operator_seconds += run_operator(
+          equation, state, derivative, block_iterations, time);
+      ceiling_seconds += run_ceiling(
+          equation, state, derivative, block_iterations, time, ceiling_source);
+    } else {
+      ceiling_seconds += run_ceiling(
+          equation, state, derivative, block_iterations, time, ceiling_source);
+      operator_seconds += run_operator(
+          equation, state, derivative, block_iterations, time);
+    }
+  }
+  return {operator_seconds, ceiling_seconds};
+}
+
+double run_source(const SdSSource &source, Vector &workspace,
+                  const int iterations, const Scalar &time) {
+  source(time, workspace);
+  const auto start = std::chrono::steady_clock::now();
+  for(int iteration = 0; iteration < iterations; ++iteration) {
+    source(time + Scalar(iteration) * Scalar("1e-4"), workspace);
+  }
+  return std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - start).count();
+}
+
+struct DopriResult {
+  double wall_seconds;
+  double cpu_seconds;
+  State state;
+};
+
+template<bool OptimizeUnitCoefficient = true>
+DopriResult run_dopri5_steps(Equation &equation,
+                             const State &initial_state,
+                             const int threads,
+                             const int steps) {
+  using Operations = boost::numeric::odeint::eigen_operations<
+      State, OptimizeUnitCoefficient>;
   using Stepper = boost::numeric::odeint::runge_kutta_dopri5<
-      State, Scalar, State, Scalar>;
+      State, Scalar, State, Scalar,
+      boost::numeric::odeint::vector_space_algebra, Operations>;
   omp_set_num_threads(threads);
   State state = initial_state;
   Stepper stepper;
   Scalar time = 50;
   const Scalar dt("0.0001");
   stepper.do_step(std::ref(equation), state, time, dt);
+  const double cpu_start = process_cpu_seconds();
   const auto start = std::chrono::steady_clock::now();
   for(int step = 0; step < steps; ++step) {
     time += dt;
     stepper.do_step(std::ref(equation), state, time, dt);
   }
-  return {std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - start).count(),
-          std::move(state)};
+  const double wall_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - start).count();
+  const double cpu_seconds = process_cpu_seconds() - cpu_start;
+  return {wall_seconds, cpu_seconds, std::move(state)};
 }
 
 Scalar max_difference(const State &left, const State &right) {
@@ -147,6 +183,59 @@ Scalar max_difference(const State &left, const State &right) {
     result = std::max(result, abs(left[i] - right[i]));
   }
   return result;
+}
+
+struct PairedDopriResult {
+  double optimized_wall_seconds;
+  double legacy_wall_seconds;
+  double wall_speedup;
+  double optimized_cpu_seconds;
+  double legacy_cpu_seconds;
+  double cpu_speedup;
+};
+
+PairedDopriResult median_paired_dopri5_step_seconds(
+    Equation &equation, const State &initial_state, const int threads,
+    const int steps, const int samples) {
+  std::vector<double> optimized_wall_timings;
+  std::vector<double> legacy_wall_timings;
+  std::vector<double> wall_speedups;
+  std::vector<double> optimized_cpu_timings;
+  std::vector<double> legacy_cpu_timings;
+  std::vector<double> cpu_speedups;
+  optimized_wall_timings.reserve(samples);
+  legacy_wall_timings.reserve(samples);
+  wall_speedups.reserve(samples);
+  optimized_cpu_timings.reserve(samples);
+  legacy_cpu_timings.reserve(samples);
+  cpu_speedups.reserve(samples);
+  for(int sample = 0; sample < samples; ++sample) {
+    DopriResult optimized;
+    DopriResult legacy;
+    if(sample % 2 == 0) {
+      optimized = run_dopri5_steps<true>(
+          equation, initial_state, threads, steps);
+      legacy = run_dopri5_steps<false>(
+          equation, initial_state, threads, steps);
+    } else {
+      legacy = run_dopri5_steps<false>(
+          equation, initial_state, threads, steps);
+      optimized = run_dopri5_steps<true>(
+          equation, initial_state, threads, steps);
+    }
+    optimized_wall_timings.push_back(optimized.wall_seconds / steps);
+    legacy_wall_timings.push_back(legacy.wall_seconds / steps);
+    wall_speedups.push_back(legacy.wall_seconds / optimized.wall_seconds);
+    optimized_cpu_timings.push_back(optimized.cpu_seconds / steps);
+    legacy_cpu_timings.push_back(legacy.cpu_seconds / steps);
+    cpu_speedups.push_back(legacy.cpu_seconds / optimized.cpu_seconds);
+  }
+  return {median(std::move(optimized_wall_timings)),
+          median(std::move(legacy_wall_timings)),
+          median(std::move(wall_speedups)),
+          median(std::move(optimized_cpu_timings)),
+          median(std::move(legacy_cpu_timings)),
+          median(std::move(cpu_speedups))};
 }
 
 }  // namespace
@@ -183,17 +272,8 @@ int main(int argc, char **argv) {
   std::vector<double> ceiling_samples;
   std::vector<double> efficiencies;
   for(int sample = 0; sample < samples; ++sample) {
-    double operator_seconds;
-    double ceiling_seconds;
-    if(sample % 2 == 0) {
-      operator_seconds = run_operator(equation, state, derivative, iterations, time);
-      ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time);
-    } else {
-      ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time);
-      operator_seconds = run_operator(equation, state, derivative, iterations, time);
-    }
+    const auto [operator_seconds, ceiling_seconds] = run_paired_rhs(
+        equation, state, derivative, iterations, time, sample % 2 == 0);
     operator_samples.push_back(operator_seconds);
     ceiling_samples.push_back(ceiling_seconds);
     efficiencies.push_back(ceiling_seconds / operator_seconds);
@@ -207,17 +287,16 @@ int main(int argc, char **argv) {
   ceiling_rhs(equation, state, derivative, time, ceiling_source);
   const Scalar ceiling_error = max_difference(derivative, homogeneous_reference);
 
+  const auto homogeneous_step_result =
+      run_dopri5_steps(equation, state, max_threads, 20);
+
   SdSTranslatedSourceParam source;
-  source.profile = SdSSourceProfile::TortoisePower;
+  source.profile = SdSSourceProfile::ArealPower;
   source.waveform = SdSWaveform::Gaussian;
-  source.beta = 2;
+  source.beta = 0;
   source.u_center = -10;
   source.sigma = Scalar("0.5");
   source.cutoff_sigma = 12;
-  source.L = 1;
-  source.x0 = 100;
-  source.X0 = 0;
-  source.X1 = 20;
   SdSSource translated_source(source);
   translated_source.initialize(
       equation.param.r_min, equation.grid_space(), equation.grid_size,
@@ -225,21 +304,20 @@ int main(int argc, char **argv) {
       equation.f);
   equation.Q = std::move(translated_source);
 
+  Vector source_workspace = Vector::Zero(equation.grid_size);
+  omp_set_num_threads(1);
+  const double one_thread_source_seconds = run_source(
+      equation.Q, source_workspace, iterations, time);
+  omp_set_num_threads(max_threads);
+  const double source_seconds = run_source(
+      equation.Q, source_workspace, iterations, time);
+
   operator_samples.clear();
   ceiling_samples.clear();
   efficiencies.clear();
   for(int sample = 0; sample < samples; ++sample) {
-    double operator_seconds;
-    double ceiling_seconds;
-    if(sample % 2 == 0) {
-      operator_seconds = run_operator(equation, state, derivative, iterations, time);
-      ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time);
-    } else {
-      ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time);
-      operator_seconds = run_operator(equation, state, derivative, iterations, time);
-    }
+    const auto [operator_seconds, ceiling_seconds] = run_paired_rhs(
+        equation, state, derivative, iterations, time, sample % 2 == 0);
     operator_samples.push_back(operator_seconds);
     ceiling_samples.push_back(ceiling_seconds);
     efficiencies.push_back(ceiling_seconds / operator_seconds);
@@ -252,12 +330,19 @@ int main(int argc, char **argv) {
   ceiling_rhs(equation, state, derivative, time, ceiling_source);
   const Scalar sourced_ceiling_error = max_difference(derivative, sourced_reference);
 
-  const auto [one_thread_step_seconds, one_thread_step_state] =
+  const auto one_thread_step_result =
       run_dopri5_steps(equation, state, 1, 5);
-  const auto [many_thread_step_seconds, many_thread_step_state] =
+  const auto many_thread_step_result =
       run_dopri5_steps(equation, state, max_threads, 5);
+  const PairedDopriResult production_steps =
+      median_paired_dopri5_step_seconds(
+          equation, state, max_threads, 10, 7);
+  const auto legacy_validation_result =
+      run_dopri5_steps<false>(equation, state, max_threads, 5);
   const Scalar step_error = max_difference(
-      one_thread_step_state, many_thread_step_state);
+      one_thread_step_result.state, many_thread_step_result.state);
+  const Scalar legacy_step_error = max_difference(
+      many_thread_step_result.state, legacy_validation_result.state);
 
   const double points = static_cast<double>(n - 3) * iterations;
   std::cout << std::setprecision(8)
@@ -274,18 +359,40 @@ int main(int argc, char **argv) {
             << "sourced_ceiling_points_per_second="
             << points / sourced_ceiling_seconds << '\n'
             << "sourced_ceiling_efficiency=" << sourced_efficiency << '\n'
+            << "source_evaluations_per_second="
+            << iterations / source_seconds << '\n'
+            << "one_thread_source_evaluations_per_second="
+            << iterations / one_thread_source_seconds << '\n'
+            << "homogeneous_dopri5_step_seconds="
+            << homogeneous_step_result.wall_seconds / 20 << '\n'
             << "dopri5_speedup="
-            << one_thread_step_seconds / many_thread_step_seconds << '\n'
+            << one_thread_step_result.wall_seconds
+                   / many_thread_step_result.wall_seconds << '\n'
             << "one_thread_dopri5_step_seconds="
-            << one_thread_step_seconds / 5 << '\n'
+            << one_thread_step_result.wall_seconds / 5 << '\n'
             << "many_thread_dopri5_step_seconds="
-            << many_thread_step_seconds / 5 << '\n'
+            << many_thread_step_result.wall_seconds / 5 << '\n'
+            << "production_median_dopri5_step_seconds="
+            << production_steps.optimized_wall_seconds << '\n'
+            << "legacy_median_dopri5_step_seconds="
+            << production_steps.legacy_wall_seconds << '\n'
+            << "dopri5_optimization_speedup="
+            << production_steps.wall_speedup << '\n'
+            << "production_median_dopri5_step_cpu_seconds="
+            << production_steps.optimized_cpu_seconds << '\n'
+            << "legacy_median_dopri5_step_cpu_seconds="
+            << production_steps.legacy_cpu_seconds << '\n'
+            << "dopri5_cpu_optimization_speedup="
+            << production_steps.cpu_speedup << '\n'
+            << "estimated_100000_step_minutes="
+            << production_steps.optimized_wall_seconds * 100000 / 60 << '\n'
             << "max_thread_abs_error=" << thread_error << '\n'
             << "max_homogeneous_ceiling_abs_error=" << ceiling_error << '\n'
             << "max_sourced_ceiling_abs_error=" << sourced_ceiling_error << '\n'
-            << "max_dopri5_abs_error=" << step_error << '\n';
+            << "max_dopri5_abs_error=" << step_error << '\n'
+            << "max_legacy_dopri5_abs_error=" << legacy_step_error << '\n';
 
-  return thread_error == 0 && step_error == 0
+  return thread_error == 0 && step_error == 0 && legacy_step_error == 0
                  && ceiling_error < Scalar("1e-28")
                  && sourced_ceiling_error < Scalar("1e-28")
                  && homogeneous_efficiency >= 0.90

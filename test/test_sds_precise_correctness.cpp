@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,7 @@ using Vector = Equation::Vector;
 int failures = 0;
 Scalar largest_relative_error = 0;
 Scalar largest_horizon_formula_difference = 0;
+Scalar largest_legacy_profile_difference = 0;
 
 void require(const bool condition, const std::string &message) {
   if(!condition) {
@@ -669,6 +672,135 @@ struct ReferenceSystem {
   }
 };
 
+struct LegacySourcedSystem {
+  const Equation &equation;
+  mutable Vector source;
+
+  explicit LegacySourcedSystem(const Equation &equation_)
+      : equation(equation_), source(Vector::Zero(equation_.grid_size)) {}
+
+  void operator()(const State &state, State &derivative,
+                  const Scalar &time) const {
+    const long long int grid_size = equation.grid_size;
+    const Scalar d2_factor = equation.inv_h_sqr / Scalar(12);
+    const Scalar near_factor = Scalar(16) * d2_factor;
+    const Scalar far_factor = -d2_factor;
+    const Scalar center_coefficient = -Scalar(30) * d2_factor;
+    const Scalar d1_factor = equation.inv_h / Scalar(12);
+    equation.Q(time, source);
+
+    const Scalar *__restrict__ psi = state.data();
+    const Scalar *__restrict__ pi = state.data() + grid_size;
+    Scalar *__restrict__ dpsi = derivative.data();
+    Scalar *__restrict__ dpi = derivative.data() + grid_size;
+    const Scalar *__restrict__ potential = equation.V.data();
+    const Scalar *__restrict__ source_data = source.data();
+
+#pragma omp parallel for schedule(static)
+    for(long long int i = 2; i <= grid_size - 3; ++i) {
+      const Scalar near_sum = psi[i - 1] + psi[i + 1];
+      const Scalar far_sum = psi[i - 2] + psi[i + 2];
+      dpi[i] = near_factor * near_sum + far_factor * far_sum
+               + (center_coefficient - potential[i]) * psi[i]
+               + source_data[i];
+      dpsi[i] = pi[i];
+    }
+
+    dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
+              - Scalar(36) * pi[2] + Scalar(16) * pi[3]
+              - Scalar(3) * pi[4]) * d1_factor
+             - potential[0] * psi[0] + source_data[0];
+    dpsi[0] = pi[0];
+    dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
+              + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
+             * d2_factor - potential[1] * psi[1] + source_data[1];
+    dpsi[1] = pi[1];
+
+    const long long int n2 = grid_size - 2;
+    const long long int n1 = grid_size - 1;
+    dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
+               + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
+               + Scalar(11) * psi[n1]) * d2_factor
+              - potential[n2] * psi[n2] + source_data[n2];
+    dpsi[n2] = pi[n2];
+    dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
+               + Scalar(16) * pi[grid_size - 4]
+               - Scalar(36) * pi[grid_size - 3]
+               + Scalar(48) * pi[n2] - Scalar(25) * pi[n1]) * d1_factor
+              - potential[n1] * psi[n1] + source_data[n1];
+    dpsi[n1] = pi[n1];
+  }
+};
+
+State make_random_state(const long long int grid_size, const std::uint64_t seed) {
+  std::mt19937_64 generator(seed);
+  std::uniform_int_distribution<long long int> distribution(-1000000, 1000000);
+  State state(2 * grid_size);
+  for(Eigen::Index i = 0; i < state.size(); ++i) {
+    state[i] = Scalar(distribution(generator)) * Scalar("1e-9");
+  }
+  return state;
+}
+
+void check_randomized_legacy_profile_evolution() {
+  using Stepper = boost::numeric::odeint::runge_kutta_dopri5<
+      State, Scalar, State, Scalar>;
+  using LegacyOperations =
+      boost::numeric::odeint::eigen_operations<State, false>;
+  using LegacyStepper = boost::numeric::odeint::runge_kutta_dopri5<
+      State, Scalar, State, Scalar,
+      boost::numeric::odeint::vector_space_algebra, LegacyOperations>;
+  constexpr std::array<const char *, 3> lambdas = {
+      "0.0444444444444444444444444444444444",
+      "0.177777777777777777777777777777778",
+      "0.355555555555555555555555555555556"};
+
+  for(int sample = 0; sample < 3; ++sample) {
+    const Param param = make_param(0, sample, 256, "-30", "60",
+                                   lambdas[sample]);
+    SdSTranslatedSourceParam source_param;
+    source_param.profile = SdSSourceProfile::ArealPower;
+    source_param.waveform = SdSWaveform::Gaussian;
+    source_param.beta = Scalar(sample);
+    source_param.amplitude = 1;
+    source_param.u_center = -10;
+    source_param.sigma = Scalar("0.5");
+    source_param.onset_time = 0;
+    source_param.cutoff_sigma = 12;
+    Equation equation(param, SdSSource(source_param));
+    LegacySourcedSystem legacy(equation);
+
+    State optimized_state = make_random_state(
+        equation.grid_size, 0x5d5f0000ULL + sample);
+    State legacy_state = optimized_state;
+    State optimized_rhs(2 * equation.grid_size);
+    State legacy_rhs(2 * equation.grid_size);
+    const Scalar start_time = Scalar("3.125") + Scalar(sample) / Scalar(7);
+    equation(optimized_state, optimized_rhs, start_time);
+    legacy(legacy_state, legacy_rhs, start_time);
+    largest_legacy_profile_difference = std::max(
+        largest_legacy_profile_difference,
+        compare_states(optimized_rhs, legacy_rhs, Scalar(0),
+                       "randomized legacy-equivalent full RHS"));
+
+    Stepper optimized_stepper;
+    LegacyStepper legacy_stepper;
+    const Scalar dt("0.0025");
+    Scalar time = start_time;
+    for(int step = 0; step < 40; ++step) {
+      optimized_stepper.do_step(
+          std::ref(equation), optimized_state, time, dt);
+      legacy_stepper.do_step(std::ref(legacy), legacy_state, time, dt);
+      time += dt;
+      largest_legacy_profile_difference = std::max(
+          largest_legacy_profile_difference,
+          compare_states(
+              optimized_state, legacy_state, Scalar(0),
+              "randomized legacy-equivalent full profile evolution"));
+    }
+  }
+}
+
 void check_dopri5_trajectory() {
   using Stepper = boost::numeric::odeint::runge_kutta_dopri5<
       State, Scalar, State, Scalar>;
@@ -713,6 +845,7 @@ int main() {
   check_source_profiles();
   check_rhs_and_sources();
   check_dopri5_trajectory();
+  check_randomized_legacy_profile_evolution();
 
   if(failures != 0) {
     std::cerr << failures << " precise SdS correctness checks failed\n";
@@ -721,6 +854,8 @@ int main() {
   std::cout << "PASS: precise SdS correctness matrix; largest relative error="
             << largest_relative_error
             << "; largest analytic/root-found horizon difference="
-            << largest_horizon_formula_difference << '\n';
+            << largest_horizon_formula_difference
+            << "; largest randomized legacy-profile difference="
+            << largest_legacy_profile_difference << '\n';
   return EXIT_SUCCESS;
 }
