@@ -8,3 +8,7 @@ main
 /test/test_eigen_scale_sums_prod
 /test/test_teukolsky_precise_correctness_san
 /test/test_eigen_scale_sums_san
+/test/benchmark_sds_precise
+/test/test_sds_precise_correctness
+/test/test_sds_precise_correctness_prod
+/test/test_sds_precise_correctness_san

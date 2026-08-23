@@ -13,6 +13,18 @@ Numerical functionalities implemented for [arXiv:2603.20379](https://arxiv.org/a
 3. An effective source that corresponds to a $` \lambda \psi^2 `$ nonlinear term for a scalar field in Kerr spacetime.
 4. Artifical Kreiss-Oliger dissipation, which is required for stable numerical evolution when $` s \neq 0 `$.
 
+Additional precise CPU functionality:
+
+1. Sourced Schwarzschild-de Sitter master equations for the conformal scalar,
+   electromagnetic, and axial gravitational sectors, with the multipole set in
+   the equation parameters.
+2. Cancellation-free 100-decimal horizon root finding and neighbor-predicted
+   tortoise inversion, followed by binary128 time evolution.
+3. A standalone `SdSSource` interface for custom callbacks; areal-power,
+   horizon-subtracted, local-scalar, and algebraic tortoise profiles (including
+   `beta=0`); Gaussian and zero-mean Gaussian-derivative waveforms; and a
+   spacetime Gaussian probe for approximating the retarded Green's function.
+
 
 
 ## Plotting
@@ -60,6 +72,30 @@ Build the complete CPU-only application with:
 make -j6 disable-cuda=true
 ```
 
+Run the configured sourced Schwarzschild-de Sitter simulation with:
+
+```bash
+./main --sds-precise
+```
+
+Edit the configuration block in `run_sds_precise_eqn()` in `src/examples.cpp`
+to select $`s`$, $`\ell`$, $`\Lambda`$, the source profile, and the waveform.
+The fixed-position time series and snapshots are saved as `double`, matching the
+existing precise runners. The source and geometry metadata file records the
+horizons, surface gravities, tortoise-coordinate convention, effective Gaussian
+cutoff, and conservative finite-domain fitting bound.
+
+Run the Schwarzschild-de Sitter correctness, sanitizer, and production-grid
+performance checks with:
+
+```bash
+make check-sds-precise-correctness
+make check-sds-precise-sanitizers
+make check-sds-precise-performance
+```
+
+See `SDS_PRECISE_REPORT.md` for the numerical design, validation matrix, and
+current scope.
+
 See `CORRECTNESS_REPORT.md` for the tested parameter matrix and current CUDA and
 performance-test limitations.
-

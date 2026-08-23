@@ -77,6 +77,10 @@ namespace Random
 
 
 int main(int argc, char **argv) {
+  if(argc == 2 && std::string(argv[1]) == "--sds-precise") {
+    run_sds_precise_eqn();
+    return 0;
+  }
   // const long long int l_max = 5;
   // const long long int lm_size = (l_max + 1) * (l_max + 1);
   // SPH::CouplingInfo info = SPH::make_coupling_info_map(l_max, {0, 6, 20, 42, 72, 110});
