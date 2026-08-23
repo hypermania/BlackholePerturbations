@@ -54,8 +54,8 @@ The inversion uses
 y = log[(r-r_b)/(r_c-r)]
 ```
 
-and a bracketed Halley iteration. This variable maps the finite static interval
-`r_b < r < r_c` to the complete real line. In particular,
+and Boost.Math's bracketed `halley_iterate`. This variable maps the finite
+static interval `r_b < r < r_c` to the complete real line. In particular,
 
 ```text
 r-r_b = (r_c-r_b) exp(y)/(1+exp(y)),
@@ -94,18 +94,47 @@ included in a constructor-time roundoff estimate. Halley iteration normally
 uses a relative residual threshold of about `1e-80`; only extremely small
 `Lambda` values use the larger calculated 100-decimal roundoff floor.
 
-OpenMP workers receive contiguous grid blocks. The first point of each block is
-bracketed from `y=0`. Each subsequent point uses the preceding converged point
-and the predictor
+OpenMP workers receive contiguous grid blocks. For `P=N+1` points and `T`
+workers, worker `t` owns the half-open interval
+
+```text
+[floor(t P/T), floor((t+1) P/T)).
+```
+
+The last worker therefore has `end=P=N+1`, but the strict `i<end` loop bound
+makes `N` the largest possible index. If `T>P`, some intervals are empty; a
+16-worker/five-point test covers this case. Geometry arrays are written only at
+the owning worker's indices. The only shared result is the first failed index,
+which uses an OpenMP `min` reduction instead of atomic storage.
+
+The first point of each nonempty block is anchored at `y=0`. Each subsequent
+point uses the preceding converged point and the predictor
 
 ```text
 y_i^(0) = y_(i-1) + [x_i-x(y_(i-1))]/[dx/dy]_(i-1).
 ```
 
-The predicted point and the preceding point form the initial monotonic bracket;
-the upper endpoint is expanded only if the predictor undershoots. This retains
-parallel initialization while reusing nearby inversions. `midpoint_x` and the
-surface gravities are no longer part of the private inversion geometry.
+The predicted point and the anchor form the initial bracket. If they remain on
+the same side of the root, the predicted step is doubled until the residual
+changes sign. This single sign-based procedure works for both directions and
+replaces the separate left/right and first/neighbor branch trees. The bracket,
+predictor, and the tuple `(x-target, dx/dy, d2x/dy2)` are then passed to
+`boost::math::tools::halley_iterate`; no local Halley update is maintained.
+
+The residual `x(y)-target` still has two necessary roles. Its sign establishes
+the initial bracket, and its magnitude validates the result against the
+physical tortoise-coordinate tolerance. The Boost callback reports an exact
+zero once this residual is below that tolerance, preventing unnecessary
+iterations to the full storage precision. The returned point is independently
+checked against the same threshold before it is accepted.
+
+This retains parallel initialization while reusing nearby inversions.
+`midpoint_x` and the surface gravities are no longer part of the private
+inversion geometry.
+
+`grid_space()` is the sole spacing calculation. Its binary128 result is reused
+by the evolution and promoted to the preprocessing type, while every coordinate
+is formed through the shared `grid_coordinate()` helper.
 
 Production preprocessing uses `cpp_bin_float_100`. The correctness test uses a
 separate `cpp_bin_float<2000>` calculation (2000 decimal digits) at a
@@ -200,16 +229,20 @@ sourced kernels both meet the 90% paired-ceiling gate. Performance samples can
 vary on the shared KVM host, so the benchmark alternates production and ceiling
 measurements and reports their medians.
 
-The old independent and new neighbor-predicted constructors were measured with
-the same 50,001-point, 60-iteration, six-thread benchmark on this VPS:
+The inversion variants were measured with the same 50,001-point, six-thread
+configuration on this VPS:
 
 | Geometry inversion | Initialization time |
 |---|---:|
 | Independent pointwise inversion | 47.35 s |
-| Contiguous blocks with neighbor predictor | 10.01 s |
+| Contiguous blocks, local safeguarded Halley | 10.01 s |
+| Contiguous blocks, Boost.Math Halley | 13.77 s median |
 
-The neighbor-predicted implementation is 4.73 times faster. In the same paired
-run, retaining physical `V` instead of `center_factor` reduced homogeneous RHS
+The maintained Boost implementation is 3.44 times faster than independent
+inversion, although Boost's more general safeguards make it 38% slower than the
+former specialized local loop. A Boost Newton sample took 16.41 s, so Halley
+was retained. In the same paired run, retaining physical `V` instead of
+`center_factor` reduced homogeneous RHS
 throughput from 26.8 to 23.7 million point updates per second and sourced
 throughput from 20.0 to 18.7 million point updates per second. These figures are
 host-sensitive, but they quantify the clarity/performance tradeoff requested

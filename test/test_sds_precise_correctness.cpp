@@ -274,7 +274,7 @@ void check_neighbor_reuse_consistency() {
   const Equation serial(param);
   omp_set_num_threads(6);
   const Equation blocked(param);
-  const Scalar h = (param.r_max - param.r_min) / Scalar(param.N - 1);
+  const Scalar h = serial.grid_space();
   for(long long int i = 0; i < serial.grid_size; ++i) {
     require(serial.grid_coordinate(i)
                 == Equation::grid_coordinate(param.r_min, h, i),
@@ -283,6 +283,24 @@ void check_neighbor_reuse_consistency() {
             && serial.rho_cosmological[i] == blocked.rho_cosmological[i]
             && serial.f[i] == blocked.f[i] && serial.V[i] == blocked.V[i],
             "neighbor inversion is independent of OpenMP block boundaries");
+  }
+
+  // More workers than points creates empty blocks.  In particular, the last
+  // nonempty block must still write index N, but no block may write N + 1.
+  const Param minimal_param = make_param(0, 1, 4, "-2", "2", "1e-3");
+  omp_set_num_threads(1);
+  const Equation minimal_serial(minimal_param);
+  omp_set_num_threads(16);
+  const Equation minimal_blocked(minimal_param);
+  require(minimal_blocked.grid_size == minimal_param.N + 1,
+          "rightmost tortoise-grid index is N");
+  for(long long int i = 0; i <= minimal_param.N; ++i) {
+    require(minimal_serial.r[i] == minimal_blocked.r[i]
+            && minimal_serial.rho_cosmological[i]
+                   == minimal_blocked.rho_cosmological[i]
+            && minimal_serial.f[i] == minimal_blocked.f[i]
+            && minimal_serial.V[i] == minimal_blocked.V[i],
+            "empty OpenMP blocks preserve every grid point through index N");
   }
 }
 

@@ -21,12 +21,12 @@
 #define SDS_PRECISE_HPP
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -141,7 +141,7 @@ struct SdSMasterPDEPrecise {
     validate_param();
 
     grid_size = param.N + 1;
-    const Scalar h = (param.r_max - param.r_min) / Scalar(param.N - 1);
+    const Scalar h = grid_space();
     inv_h = Scalar(1) / h;
     inv_h_sqr = inv_h * inv_h;
 
@@ -169,13 +169,10 @@ struct SdSMasterPDEPrecise {
                                 .convert_to<Scalar>();
 
     const HighPrecisionScalar x_min_hp(param.r_min);
-    const HighPrecisionScalar h_hp =
-        (HighPrecisionScalar(param.r_max) - x_min_hp)
-        / HighPrecisionScalar(param.N - 1);
-    std::atomic<bool> inversion_failed(false);
-    std::atomic<long long int> first_failed_index(grid_size);
+    const HighPrecisionScalar h_hp(h);
+    long long int first_failed_index = grid_size;
 
-#pragma omp parallel
+#pragma omp parallel reduction(min:first_failed_index)
     {
       const long long int thread = omp_get_thread_num();
       const long long int thread_count = omp_get_num_threads();
@@ -190,10 +187,7 @@ struct SdSMasterPDEPrecise {
         const TortoisePointHP point = invert_tortoise(
             geometry, x_hp, have_previous ? &previous : nullptr);
         if(!point.success) {
-          inversion_failed.store(true, std::memory_order_relaxed);
-          long long int expected = grid_size;
-          first_failed_index.compare_exchange_strong(
-              expected, i, std::memory_order_relaxed);
+          first_failed_index = std::min(first_failed_index, i);
         }
 
         const HighPrecisionScalar f_hp =
@@ -216,10 +210,10 @@ struct SdSMasterPDEPrecise {
       }
     }
 
-    if(inversion_failed.load(std::memory_order_relaxed)) {
+    if(first_failed_index < grid_size) {
       throw std::runtime_error(
           "SdS tortoise-coordinate inversion failed at grid index "
-          + std::to_string(first_failed_index.load(std::memory_order_relaxed)));
+          + std::to_string(first_failed_index));
     }
   }
 
@@ -232,11 +226,11 @@ struct SdSMasterPDEPrecise {
 
 
   Scalar grid_coordinate(const long long int i) const {
-    return grid_coordinate(param.r_min, grid_spacing(), i);
+    return grid_coordinate(param.r_min, grid_space(), i);
   }
 
 
-  Scalar grid_spacing() const {
+  Scalar grid_space() const {
     return (param.r_max - param.r_min) / Scalar(param.N - 1);
   }
 
@@ -264,7 +258,7 @@ struct SdSMasterPDEPrecise {
 
     const Scalar beta = source_param.beta;
     const Scalar rc_power = pow(r_cosmological, -beta);
-    const Scalar h = grid_spacing();
+    const Scalar h = grid_space();
 
 #pragma omp parallel for schedule(static)
     for(long long int i = 0; i < grid_size; ++i) {
@@ -320,7 +314,7 @@ struct SdSMasterPDEPrecise {
 
   Scalar translated_source_value(const long long int i,
                                  const Scalar &t) const {
-    return translated_source_value(i, t, grid_spacing());
+    return translated_source_value(i, t, grid_space());
   }
 
 
@@ -365,7 +359,7 @@ struct SdSMasterPDEPrecise {
 
     long long int source_begin = 1;
     long long int source_end = 0;
-    const Scalar h = grid_spacing();
+    const Scalar h = grid_space();
     if(has_translated_source && t >= translated_source_param.onset_time) {
       const Scalar radius = translated_source_param.cutoff_sigma
                             * translated_source_param.sigma;
@@ -628,91 +622,68 @@ struct SdSMasterPDEPrecise {
         HighPrecisionScalar(1) + abs(target_x);
     const HighPrecisionScalar threshold = std::max(
         tolerance * target_scale, geometry.tortoise_roundoff);
-    TortoisePointHP lower;
-    TortoisePointHP upper;
-    TortoisePointHP evaluation;
-
-    if(previous != nullptr && previous->success && previous->x < target_x) {
-      lower = *previous;
-      // First-order continuation: dy/dx = 1/(dx/dy).
-      HighPrecisionScalar step = (target_x - previous->x) / previous->dx_dy;
-      if(!(step > 0)) step = HighPrecisionScalar(1);
-      evaluation = evaluate_y(geometry, previous->y + step);
-      if(evaluation.x >= target_x) {
-        upper = evaluation;
-      } else {
-        lower = evaluation;
-        for(int expansion = 0; expansion < 100; ++expansion) {
-          step *= HighPrecisionScalar(2);
-          upper = evaluate_y(geometry, previous->y + step);
-          if(upper.x >= target_x) break;
-          lower = upper;
-        }
-      }
-    } else {
-      const TortoisePointHP middle = evaluate_y(
-          geometry, HighPrecisionScalar(0));
-      if(abs(middle.x - target_x) <= threshold) {
-        TortoisePointHP result = middle;
-        result.success = true;
-        return result;
-      }
-      HighPrecisionScalar step = 1;
-      if(target_x < middle.x) {
-        upper = middle;
-        lower = evaluate_y(geometry, -step);
-        for(int expansion = 0;
-            lower.x > target_x && expansion < 100; ++expansion) {
-          step *= HighPrecisionScalar(2);
-          lower = evaluate_y(geometry, -step);
-        }
-      } else {
-        lower = middle;
-        upper = evaluate_y(geometry, step);
-        for(int expansion = 0;
-            upper.x < target_x && expansion < 100; ++expansion) {
-          step *= HighPrecisionScalar(2);
-          upper = evaluate_y(geometry, step);
-        }
-      }
-      evaluation = evaluate_y(
-          geometry, (lower.y + upper.y) / HighPrecisionScalar(2));
+    TortoisePointHP anchor = previous != nullptr && previous->success
+        ? *previous : evaluate_y(geometry, HighPrecisionScalar(0));
+    const HighPrecisionScalar anchor_residual = anchor.x - target_x;
+    if(abs(anchor_residual) <= threshold) {
+      anchor.success = true;
+      return anchor;
     }
+    anchor.success = false;
 
-    if(lower.x > target_x || upper.x < target_x) {
-      return evaluation;
+    // Predict the new y from dy/dx at the anchor, then expand that same step
+    // until the monotonic function x(y)-target_x changes sign.
+    HighPrecisionScalar step = -anchor_residual / anchor.dx_dy;
+    if(step == 0) return anchor;
+    const HighPrecisionScalar guess = anchor.y + step;
+    TortoisePointHP outer = evaluate_y(geometry, guess);
+    auto same_strict_sign = [](const HighPrecisionScalar &left,
+                               const HighPrecisionScalar &right) {
+      return (left < 0 && right < 0) || (left > 0 && right > 0);
+    };
+    HighPrecisionScalar outer_residual = outer.x - target_x;
+    for(int expansion = 0;
+        abs(outer_residual) > threshold
+            && same_strict_sign(anchor_residual, outer_residual)
+            && expansion < 100;
+        ++expansion) {
+      step *= HighPrecisionScalar(2);
+      outer = evaluate_y(geometry, anchor.y + step);
+      outer_residual = outer.x - target_x;
     }
-
-    bool converged = false;
-
-    for(int iteration = 0; iteration < 120; ++iteration) {
-      // Its magnitude tests convergence, its sign updates the monotonic
-      // bracket, and its value enters the safeguarded Halley correction.
-      const HighPrecisionScalar residual = evaluation.x - target_x;
-      if(abs(residual) <= threshold) {
-        converged = true;
-        break;
-      }
-      if(residual < 0) lower = evaluation;
-      else upper = evaluation;
-
-      const HighPrecisionScalar denominator =
-          HighPrecisionScalar(2) * evaluation.dx_dy * evaluation.dx_dy
-          - residual * evaluation.d2x_dy2;
-      HighPrecisionScalar candidate =
-          (lower.y + upper.y) / HighPrecisionScalar(2);
-      if(denominator != 0) {
-        const HighPrecisionScalar halley = evaluation.y
-            - HighPrecisionScalar(2) * residual * evaluation.dx_dy
-                  / denominator;
-        if(halley > lower.y && halley < upper.y) candidate = halley;
-      }
-      evaluation = evaluate_y(geometry, candidate);
+    if(abs(outer_residual) <= threshold) {
+      outer.success = true;
+      return outer;
     }
+    if(same_strict_sign(anchor_residual, outer_residual)) return outer;
 
-    const HighPrecisionScalar final_residual = abs(evaluation.x - target_x);
-    evaluation.success = converged || final_residual <= threshold;
-    return evaluation;
+    const HighPrecisionScalar lower = std::min(anchor.y, outer.y);
+    const HighPrecisionScalar upper = std::max(anchor.y, outer.y);
+    TortoisePointHP last_evaluation;
+    auto root_function = [&](const HighPrecisionScalar &y) {
+      last_evaluation = evaluate_y(geometry, y);
+      const HighPrecisionScalar residual = last_evaluation.x - target_x;
+      // Boost otherwise iterates to its step-size target even after the
+      // physically relevant tortoise residual is already below threshold.
+      const HighPrecisionScalar value = abs(residual) <= threshold
+          ? HighPrecisionScalar(0) : residual;
+      return std::make_tuple(value, last_evaluation.dx_dy,
+                             last_evaluation.d2x_dy2);
+    };
+
+    try {
+      std::uintmax_t max_iterations = 120;
+      const int requested_bits =
+          std::numeric_limits<HighPrecisionScalar>::digits - 8;
+      const HighPrecisionScalar root = boost::math::tools::halley_iterate(
+          root_function, guess, lower, upper, requested_bits, max_iterations);
+      TortoisePointHP result = last_evaluation.y == root
+          ? last_evaluation : evaluate_y(geometry, root);
+      result.success = abs(result.x - target_x) <= threshold;
+      return result;
+    } catch(const std::exception &) {
+      return outer;
+    }
   }
 };
 

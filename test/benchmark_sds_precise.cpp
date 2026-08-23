@@ -63,7 +63,7 @@ std::pair<long long int, long long int> source_window(
   const Scalar radius = equation.translated_source_param.cutoff_sigma
                         * equation.translated_source_param.sigma;
   const Scalar center_x = time - equation.translated_source_param.u_center;
-  const Scalar h = equation.grid_spacing();
+  const Scalar h = equation.grid_space();
   const Scalar first_x = Equation::grid_coordinate(
       equation.param.r_min, h, 0);
   const Scalar begin_real = (center_x - radius - first_x) * equation.inv_h;
@@ -89,7 +89,7 @@ void ceiling_rhs(const Equation &equation, const State &state,
   const Scalar far_factor = -d2_factor;
   const Scalar center_coefficient = -Scalar(30) * d2_factor;
   const Scalar d1_factor = equation.inv_h / Scalar(12);
-  const Scalar h = equation.grid_spacing();
+  const Scalar h = equation.grid_space();
   const auto [source_begin, source_end] = sourced
       ? source_window(equation, time) : std::pair<long long int, long long int>{1, 0};
   const bool source_active = source_begin <= source_end;
