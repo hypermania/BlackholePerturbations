@@ -63,8 +63,9 @@ std::pair<long long int, long long int> source_window(
   const Scalar radius = equation.translated_source_param.cutoff_sigma
                         * equation.translated_source_param.sigma;
   const Scalar center_x = time - equation.translated_source_param.u_center;
-  const Scalar first_x = equation.param.r_min
-                         - Scalar(1) / (Scalar(2) * equation.inv_h);
+  const Scalar h = equation.grid_spacing();
+  const Scalar first_x = Equation::grid_coordinate(
+      equation.param.r_min, h, 0);
   const Scalar begin_real = (center_x - radius - first_x) * equation.inv_h;
   const Scalar end_real = (center_x + radius - first_x) * equation.inv_h;
   if(end_real < 0 || begin_real > Scalar(equation.grid_size - 1)) return {1, 0};
@@ -82,61 +83,67 @@ void ceiling_rhs(const Equation &equation, const State &state,
   const Scalar *__restrict__ pi = state.data() + grid_size;
   Scalar *__restrict__ dpsi = derivative.data();
   Scalar *__restrict__ dpi = derivative.data() + grid_size;
-  const Scalar *__restrict__ center = equation.center_factor.data();
   const Scalar *__restrict__ potential = equation.V.data();
   const Scalar d2_factor = equation.inv_h_sqr / Scalar(12);
   const Scalar near_factor = Scalar(16) * d2_factor;
   const Scalar far_factor = -d2_factor;
+  const Scalar center_coefficient = -Scalar(30) * d2_factor;
   const Scalar d1_factor = equation.inv_h / Scalar(12);
+  const Scalar h = equation.grid_spacing();
   const auto [source_begin, source_end] = sourced
       ? source_window(equation, time) : std::pair<long long int, long long int>{1, 0};
   const bool source_active = source_begin <= source_end;
 
-#pragma omp parallel
-  {
-#pragma omp for schedule(static)
+  if(source_active) {
+#pragma omp parallel for schedule(static)
     for(long long int i = 2; i <= grid_size - 3; ++i) {
       const Scalar near_sum = psi[i - 1] + psi[i + 1];
       const Scalar far_sum = psi[i - 2] + psi[i + 2];
       dpi[i] = near_factor * near_sum + far_factor * far_sum
-               + center[i] * psi[i];
-      if(source_active && i >= source_begin && i <= source_end) {
-        dpi[i] += equation.translated_source_value(i, time);
+               + (center_coefficient - potential[i]) * psi[i];
+      if(i >= source_begin && i <= source_end) {
+        dpi[i] += equation.translated_source_value(i, time, h);
       }
       dpsi[i] = pi[i];
     }
-
-#pragma omp single nowait
-    {
-      auto source_at = [&](const long long int i) {
-        return source_active && i >= source_begin && i <= source_end
-            ? equation.translated_source_value(i, time) : Scalar(0);
-      };
-      dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
-                - Scalar(36) * pi[2] + Scalar(16) * pi[3]
-                - Scalar(3) * pi[4]) * d1_factor
-               - potential[0] * psi[0] + source_at(0);
-      dpsi[0] = pi[0];
-      dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
-                + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
-               * d2_factor - potential[1] * psi[1] + source_at(1);
-      dpsi[1] = pi[1];
-
-      const long long int n2 = grid_size - 2;
-      const long long int n1 = grid_size - 1;
-      dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
-                 + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
-                 + Scalar(11) * psi[n1]) * d2_factor
-                - potential[n2] * psi[n2] + source_at(n2);
-      dpsi[n2] = pi[n2];
-      dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
-                 + Scalar(16) * pi[grid_size - 4]
-                 - Scalar(36) * pi[grid_size - 3] + Scalar(48) * pi[n2]
-                 - Scalar(25) * pi[n1]) * d1_factor
-                - potential[n1] * psi[n1] + source_at(n1);
-      dpsi[n1] = pi[n1];
+  } else {
+#pragma omp parallel for schedule(static)
+    for(long long int i = 2; i <= grid_size - 3; ++i) {
+      const Scalar near_sum = psi[i - 1] + psi[i + 1];
+      const Scalar far_sum = psi[i - 2] + psi[i + 2];
+      dpi[i] = near_factor * near_sum + far_factor * far_sum
+               + (center_coefficient - potential[i]) * psi[i];
+      dpsi[i] = pi[i];
     }
   }
+
+  auto source_at = [&](const long long int i) {
+    return source_active && i >= source_begin && i <= source_end
+        ? equation.translated_source_value(i, time, h) : Scalar(0);
+  };
+  dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
+            - Scalar(36) * pi[2] + Scalar(16) * pi[3]
+            - Scalar(3) * pi[4]) * d1_factor
+           - potential[0] * psi[0] + source_at(0);
+  dpsi[0] = pi[0];
+  dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
+            + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
+           * d2_factor - potential[1] * psi[1] + source_at(1);
+  dpsi[1] = pi[1];
+
+  const long long int n2 = grid_size - 2;
+  const long long int n1 = grid_size - 1;
+  dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
+             + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
+             + Scalar(11) * psi[n1]) * d2_factor
+            - potential[n2] * psi[n2] + source_at(n2);
+  dpsi[n2] = pi[n2];
+  dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
+             + Scalar(16) * pi[grid_size - 4]
+             - Scalar(36) * pi[grid_size - 3] + Scalar(48) * pi[n2]
+             - Scalar(25) * pi[n1]) * d1_factor
+            - potential[n1] * psi[n1] + source_at(n1);
+  dpsi[n1] = pi[n1];
 }
 
 double run_ceiling(const Equation &equation, const State &state,

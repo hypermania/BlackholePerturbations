@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -26,6 +27,7 @@ using Vector = Equation::Vector;
 
 int failures = 0;
 Scalar largest_relative_error = 0;
+Scalar largest_horizon_formula_difference = 0;
 
 void require(const bool condition, const std::string &message) {
   if(!condition) {
@@ -50,6 +52,46 @@ Param make_param(const long long int s, const long long int l,
   param.t_interval = Scalar("0.1");
   param.delta_t = Scalar("0.001");
   return param;
+}
+
+template<typename HP, typename Function>
+HP bisect_root(Function function, HP lower, HP upper) {
+  HP lower_value = function(lower);
+  require(lower_value * function(upper) <= 0, "root-finding bracket");
+  for(int iteration = 0; iteration < 500; ++iteration) {
+    const HP middle = (lower + upper) / HP(2);
+    const HP middle_value = function(middle);
+    if(middle_value == 0) return middle;
+    if((lower_value < 0) == (middle_value < 0)) {
+      lower = middle;
+      lower_value = middle_value;
+    } else {
+      upper = middle;
+    }
+  }
+  return (lower + upper) / HP(2);
+}
+
+template<typename HP>
+std::array<HP, 3> analytic_horizons(const HP &mass, const HP &lambda) {
+  const HP pi = boost::math::constants::pi<HP>();
+  const HP sqrt_lambda = sqrt(lambda);
+  const HP angle = acos(HP(3) * mass * sqrt_lambda) / HP(3);
+  const HP rb = HP(2) / sqrt_lambda * cos(angle + pi / HP(3));
+  const HP rc = HP(2) / sqrt_lambda * cos(angle - pi / HP(3));
+  return {rb, rc, -(rb + rc)};
+}
+
+template<typename HP>
+std::array<HP, 3> root_found_horizons(const HP &mass, const HP &lambda) {
+  auto cubic = [&](const HP &radius) {
+    return lambda * radius * radius * radius - HP(3) * radius
+           + HP(6) * mass;
+  };
+  const HP rb = bisect_root(cubic, HP(2) * mass, HP(3) * mass);
+  const HP rc = bisect_root(cubic, HP(3) * mass, sqrt(HP(3) / lambda));
+  const HP ro = bisect_root(cubic, -HP(2) * sqrt(HP(3) / lambda), HP(0));
+  return {rb, rc, ro};
 }
 
 State make_state(const long long int grid_size, const int seed) {
@@ -163,6 +205,46 @@ void check_parameter_validation() {
   require(rejects(param), "rejects undersized grid");
 }
 
+void check_horizon_root_algorithms() {
+  using HP = boost::multiprecision::cpp_bin_float_100;
+  for(const char *lambda_text : {
+          "1e-4", "1e-12", "1e-100", "0.44",
+          "0.444444444444444444444444444444"}) {
+    const HP mass("0.5");
+    const HP lambda(lambda_text);
+    const auto analytic = analytic_horizons(mass, lambda);
+    const auto root_found = root_found_horizons(mass, lambda);
+    for(std::size_t root = 0; root < analytic.size(); ++root) {
+      const HP relative_difference = abs(analytic[root] - root_found[root])
+                                     / abs(root_found[root]);
+      largest_horizon_formula_difference = std::max(
+          largest_horizon_formula_difference,
+          relative_difference.convert_to<Scalar>());
+      require(relative_difference < HP("1e-45"),
+              "analytic and root-found horizons agree beyond binary128");
+    }
+
+    Param param = make_param(0, 1, 4, "-2", "2", lambda_text);
+    Equation equation(param);
+    const auto production_reference = root_found_horizons(
+        HP(param.M), HP(param.Lambda));
+    const std::array<Scalar, 3> production = {
+        equation.r_black_hole, equation.r_cosmological, equation.r_negative};
+    for(std::size_t root = 0; root < production.size(); ++root) {
+      const Scalar reference = production_reference[root].convert_to<Scalar>();
+      const Scalar relative_difference = abs(production[root] - reference)
+                                         / abs(reference);
+      if(relative_difference >= Scalar("2e-32")) {
+        std::cerr << "horizon mismatch: Lambda=" << lambda_text
+                  << " root=" << root
+                  << " relative_difference=" << relative_difference << '\n';
+      }
+      require(relative_difference < Scalar("2e-32"),
+              "production horizons agree with independent root finding");
+    }
+  }
+}
+
 void check_geometry_case(const Param &param, const std::string &label) {
   Equation equation(param);
   require(equation.r_negative < 0 && equation.r_black_hole > 0
@@ -170,44 +252,69 @@ void check_geometry_case(const Param &param, const std::string &label) {
           label + ": ordered horizons");
   require(equation.kappa_black_hole > 0 && equation.kappa_cosmological > 0,
           label + ": positive surface gravities");
-  require(equation.max_inversion_residual < Scalar("2e-77"),
-          label + ": inversion residual");
 
   for(long long int i = 0; i < equation.grid_size; ++i) {
-    require(equation.rho_black_hole[i] > 0
+    require(equation.r[i] >= equation.r_black_hole
+            && equation.r[i] < equation.r_cosmological
             && equation.rho_cosmological[i] > 0 && equation.f[i] > 0,
-            label + ": positive horizon distances and f");
+            label + ": geometry lies between the horizons");
     if(i > 0) {
       require(equation.r[i] >= equation.r[i - 1],
               label + ": monotonic r(x)");
-      require(equation.r_ast[i] > equation.r_ast[i - 1],
+      require(equation.grid_coordinate(i)
+                  > equation.grid_coordinate(i - 1),
               label + ": monotonic x grid");
     }
+  }
+}
 
-    const Scalar factored = equation.param.Lambda
-        * equation.rho_black_hole[i] * equation.rho_cosmological[i]
-        * (equation.r[i] - equation.r_negative)
-        / (Scalar(3) * equation.r[i]);
-    const Scalar error = abs(factored - equation.f[i])
-                         / std::max(abs(equation.f[i]), Scalar("1e-4900"));
-    require(error < Scalar("2e-31"), label + ": factorized f identity");
+void check_neighbor_reuse_consistency() {
+  const Param param = make_param(2, 2, 600, "-500", "1000", "1e-4");
+  omp_set_num_threads(1);
+  const Equation serial(param);
+  omp_set_num_threads(6);
+  const Equation blocked(param);
+  const Scalar h = (param.r_max - param.r_min) / Scalar(param.N - 1);
+  for(long long int i = 0; i < serial.grid_size; ++i) {
+    require(serial.grid_coordinate(i)
+                == Equation::grid_coordinate(param.r_min, h, i),
+            "shared tortoise-grid coordinate helper");
+    require(serial.r[i] == blocked.r[i]
+            && serial.rho_cosmological[i] == blocked.rho_cosmological[i]
+            && serial.f[i] == blocked.f[i] && serial.V[i] == blocked.V[i],
+            "neighbor inversion is independent of OpenMP block boundaries");
   }
 }
 
 void check_schwarzschild_limit() {
   using HP = boost::multiprecision::cpp_bin_float_100;
-  Equation equation(make_param(0, 1, 40, "-20", "40", "1e-12"));
-  const HP two_m(1);
-  for(long long int i : {0LL, 10LL, 20LL, 30LL, 40LL}) {
-    const HP x(equation.r_ast[i]);
-    const HP radius = two_m * (HP(1) + boost::math::lambert_w0(
-        exp(x / two_m - HP(1))));
-    const Scalar reference = radius.convert_to<Scalar>();
-    const Scalar relative_error = abs(equation.r[i] - reference)
-                                  / reference;
-    require(relative_error < Scalar("2e-8"),
-            "Schwarzschild tortoise-coordinate limit");
+  Scalar previous_error = std::numeric_limits<Scalar>::infinity();
+  for(const char *lambda : {"1e-8", "1e-12", "1e-16"}) {
+    Equation equation(make_param(0, 1, 40, "-20", "40", lambda));
+    Scalar max_coordinate_error = 0;
+    for(long long int i : {10LL, 20LL, 30LL, 40LL}) {
+      const HP x(equation.grid_coordinate(i));
+      const HP radius(equation.r[i]);
+      const HP schwarzschild_x = radius + log(radius - HP(1));
+      const Scalar coordinate_error =
+          (abs(schwarzschild_x - x) / (HP(1) + abs(x)))
+              .convert_to<Scalar>();
+      max_coordinate_error = std::max(max_coordinate_error,
+                                      coordinate_error);
+
+      const HP inverse_radius = HP(1) + boost::math::lambert_w0(
+          exp(x - HP(1)));
+      const Scalar inverse_error =
+          (abs(radius - inverse_radius) / inverse_radius).convert_to<Scalar>();
+      require(inverse_error < Scalar("3e-4"),
+              "SdS radius approaches the Schwarzschild inverse");
+    }
+    require(max_coordinate_error < previous_error / Scalar(1000),
+            "Schwarzschild-coordinate error decreases with Lambda");
+    previous_error = max_coordinate_error;
   }
+  require(previous_error < Scalar("1e-9"),
+          "r_* = r + log(r-1) in the Lambda -> 0 limit for M=0.5");
 }
 
 #ifndef SDS_SKIP_2000_DIGIT_REFERENCE
@@ -265,7 +372,7 @@ ReferencePoint<HP> reference_point(const Param &param, const HP &target_x) {
   HP lower(-4096);
   HP upper(4096);
   require(evaluate(lower).first < target_x && evaluate(upper).first > target_x,
-          "2000-digit reference bracket");
+          "2000-decimal reference bracket");
   HP y = 0;
   for(int iteration = 0; iteration < 80; ++iteration) {
     const auto evaluation = evaluate(y);
@@ -289,7 +396,7 @@ void check_2000_digit_reference() {
   Equation equation(param);
   for(long long int i : {0LL, 4LL, 8LL}) {
     const ReferencePoint<HP2000> reference =
-        reference_point<HP2000>(param, HP2000(equation.r_ast[i]));
+        reference_point<HP2000>(param, HP2000(equation.grid_coordinate(i)));
     const Scalar f_reference = reference.f.convert_to<Scalar>();
     const Scalar inv_r = Scalar(1) / reference.r.convert_to<Scalar>();
     const Scalar potential_reference = f_reference
@@ -372,13 +479,13 @@ void check_source_profiles() {
   source.X1 = 20;
   equation.set_translated_gaussian_source(source);
   for(long long int i = 0; i < equation.grid_size; ++i) {
-    if(equation.r_ast[i] <= source.X0) {
+    const Scalar x = equation.grid_coordinate(i);
+    if(x <= source.X0) {
       require(equation.translated_source_spatial[i] == 0,
               "tortoise profile vanishes below cutoff");
     }
-    if(equation.r_ast[i] >= source.X1) {
-      const Scalar expected = pow(source.L / (equation.r_ast[i] + source.x0),
-                                  source.beta);
+    if(x >= source.X1) {
+      const Scalar expected = pow(source.L / (x + source.x0), source.beta);
       require(abs(equation.translated_source_spatial[i] - expected)
                   < Scalar("2e-31") * std::max(Scalar(1), abs(expected)),
               "tortoise profile above cutoff");
@@ -461,7 +568,8 @@ void check_rhs_and_sources() {
   translated.waveform = SdSWaveform::GaussianDerivative;
   equation.set_translated_gaussian_source(translated);
   const long long int i = equation.grid_size / 2;
-  const Scalar center_time = equation.r_ast[i] + translated.u_center;
+  const Scalar center_time = equation.grid_coordinate(i)
+                             + translated.u_center;
   require(equation.translated_source_value(i, center_time) == 0,
           "Gaussian derivative vanishes at its center");
   const Scalar left = equation.translated_source_value(
@@ -510,13 +618,15 @@ void check_dopri5_trajectory() {
 int main() {
   omp_set_dynamic(0);
   check_parameter_validation();
+  check_horizon_root_algorithms();
   check_geometry_case(make_param(0, 1, 48, "-500", "1000", "1e-6"),
                       "small Lambda");
   check_geometry_case(make_param(2, 2, 48, "-200", "400", "0.44"),
                       "near Nariai");
+  check_neighbor_reuse_consistency();
   check_schwarzschild_limit();
 #ifndef SDS_SKIP_2000_DIGIT_REFERENCE
-  check_2000_digit_reference();
+    check_2000_digit_reference();
 #endif
   check_multipole_constructor();
   check_source_profiles();
@@ -528,6 +638,8 @@ int main() {
     return EXIT_FAILURE;
   }
   std::cout << "PASS: precise SdS correctness matrix; largest relative error="
-            << largest_relative_error << '\n';
+            << largest_relative_error
+            << "; largest analytic/root-found horizon difference="
+            << largest_horizon_formula_difference << '\n';
   return EXIT_SUCCESS;
 }

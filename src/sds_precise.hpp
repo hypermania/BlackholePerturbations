@@ -28,13 +28,15 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <Eigen/Dense>
 #include <boost/math/constants/constants.hpp>
+#include <boost/math/tools/roots.hpp>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <boost/multiprecision/eigen.hpp>
 #include <boost/multiprecision/float128.hpp>
+#include <omp.h>
+#include <quadmath.h>
 
 
 enum class SdSSourceProfile : long long {
@@ -121,15 +123,11 @@ struct SdSMasterPDEPrecise {
   Scalar r_negative;
   Scalar kappa_black_hole;
   Scalar kappa_cosmological;
-  Scalar max_inversion_residual;
 
-  Vector r_ast;
   Vector r;
-  Vector rho_black_hole;
   Vector rho_cosmological;
   Vector f;
   Vector V;
-  Vector center_factor;
 
   std::function<void(const Scalar &, Vector &)> Q;
   mutable Vector Q_workspace;
@@ -147,13 +145,10 @@ struct SdSMasterPDEPrecise {
     inv_h = Scalar(1) / h;
     inv_h_sqr = inv_h * inv_h;
 
-    r_ast.resize(grid_size);
     r.resize(grid_size);
-    rho_black_hole.resize(grid_size);
     rho_cosmological.resize(grid_size);
     f.resize(grid_size);
     V.resize(grid_size);
-    center_factor.resize(grid_size);
     Q_workspace.resize(grid_size);
 
     const GeometryHP geometry = make_geometry(
@@ -161,67 +156,88 @@ struct SdSMasterPDEPrecise {
     r_black_hole = geometry.rb.convert_to<Scalar>();
     r_cosmological = geometry.rc.convert_to<Scalar>();
     r_negative = geometry.ro.convert_to<Scalar>();
-    kappa_black_hole = geometry.kappa_b.convert_to<Scalar>();
-    kappa_cosmological = geometry.kappa_c.convert_to<Scalar>();
+    const HighPrecisionScalar mass_hp(param.M);
+    const HighPrecisionScalar lambda_hp(param.Lambda);
+    auto f_prime = [&](const HighPrecisionScalar &radius) {
+      return HighPrecisionScalar(2) * mass_hp / (radius * radius)
+             - HighPrecisionScalar(2) * lambda_hp * radius
+                   / HighPrecisionScalar(3);
+    };
+    kappa_black_hole = (f_prime(geometry.rb) / HighPrecisionScalar(2))
+                               .convert_to<Scalar>();
+    kappa_cosmological = (-f_prime(geometry.rc) / HighPrecisionScalar(2))
+                                .convert_to<Scalar>();
 
     const HighPrecisionScalar x_min_hp(param.r_min);
     const HighPrecisionScalar h_hp =
         (HighPrecisionScalar(param.r_max) - x_min_hp)
         / HighPrecisionScalar(param.N - 1);
-    std::vector<Scalar> residuals(static_cast<std::size_t>(grid_size));
     std::atomic<bool> inversion_failed(false);
+    std::atomic<long long int> first_failed_index(grid_size);
 
-#pragma omp parallel for schedule(static)
-    for(long long int i = 0; i < grid_size; ++i) {
-      const HighPrecisionScalar x_hp =
-          x_min_hp + HighPrecisionScalar(i) * h_hp - h_hp / 2;
-      const InversionHP point = invert_tortoise(geometry, x_hp);
-      if(!point.success) inversion_failed.store(true, std::memory_order_relaxed);
+#pragma omp parallel
+    {
+      const long long int thread = omp_get_thread_num();
+      const long long int thread_count = omp_get_num_threads();
+      const long long int begin = thread * grid_size / thread_count;
+      const long long int end = (thread + 1) * grid_size / thread_count;
+      TortoisePointHP previous;
+      bool have_previous = false;
 
-      const HighPrecisionScalar f_hp =
-          geometry.lambda * point.rho_b * point.rho_c * point.r_minus_ro
-          / (HighPrecisionScalar(3) * point.r);
-      const HighPrecisionScalar inv_r = HighPrecisionScalar(1) / point.r;
-      const HighPrecisionScalar potential_hp = f_hp * (
-          HighPrecisionScalar(param.l * (param.l + 1)) * inv_r * inv_r
-          + HighPrecisionScalar(1 - param.s * param.s)
-                * HighPrecisionScalar(2) * geometry.mass
-                * inv_r * inv_r * inv_r);
+      for(long long int i = begin; i < end; ++i) {
+        const HighPrecisionScalar x_hp = grid_coordinate(
+            x_min_hp, h_hp, i);
+        const TortoisePointHP point = invert_tortoise(
+            geometry, x_hp, have_previous ? &previous : nullptr);
+        if(!point.success) {
+          inversion_failed.store(true, std::memory_order_relaxed);
+          long long int expected = grid_size;
+          first_failed_index.compare_exchange_strong(
+              expected, i, std::memory_order_relaxed);
+        }
 
-      r_ast[i] = x_hp.convert_to<Scalar>();
-      r[i] = point.r.convert_to<Scalar>();
-      rho_black_hole[i] = point.rho_b.convert_to<Scalar>();
-      rho_cosmological[i] = point.rho_c.convert_to<Scalar>();
-      f[i] = f_hp.convert_to<Scalar>();
-      V[i] = potential_hp.convert_to<Scalar>();
-      residuals[static_cast<std::size_t>(i)] = point.residual.convert_to<Scalar>();
+        const HighPrecisionScalar f_hp =
+            geometry.lambda * point.rho_b * point.rho_c
+            * (point.r - geometry.ro)
+            / (HighPrecisionScalar(3) * point.r);
+        const HighPrecisionScalar inv_r = HighPrecisionScalar(1) / point.r;
+        const HighPrecisionScalar potential_hp = f_hp * (
+            HighPrecisionScalar(param.l * (param.l + 1)) * inv_r * inv_r
+            + HighPrecisionScalar(1 - param.s * param.s)
+                  * HighPrecisionScalar(2) * mass_hp
+                  * inv_r * inv_r * inv_r);
+
+        r[i] = point.r.convert_to<Scalar>();
+        rho_cosmological[i] = point.rho_c.convert_to<Scalar>();
+        f[i] = f_hp.convert_to<Scalar>();
+        V[i] = potential_hp.convert_to<Scalar>();
+        previous = point;
+        have_previous = true;
+      }
     }
 
     if(inversion_failed.load(std::memory_order_relaxed)) {
-      throw std::runtime_error("SdS tortoise-coordinate inversion failed");
+      throw std::runtime_error(
+          "SdS tortoise-coordinate inversion failed at grid index "
+          + std::to_string(first_failed_index.load(std::memory_order_relaxed)));
     }
-    max_inversion_residual = 0;
-    for(const Scalar &residual : residuals) {
-      max_inversion_residual = std::max(max_inversion_residual, residual);
-    }
-
-    const Scalar d2_factor = inv_h_sqr / Scalar(12);
-    center_factor = -Scalar(30) * d2_factor - V;
   }
 
 
-  static Vector compute_r_ast_vector(const Scalar r_min, const Scalar r_max,
-                                     const long long int N) {
-    if(N < 4 || !(r_max > r_min)) {
-      throw std::invalid_argument("invalid SdS grid");
-    }
-    const Scalar h = (r_max - r_min) / Scalar(N - 1);
-    Vector result(N + 1);
-#pragma omp parallel for schedule(static)
-    for(long long int i = 0; i <= N; ++i) {
-      result[i] = r_min + Scalar(i) * h - h / Scalar(2);
-    }
-    return result;
+  template<typename Number>
+  static Number grid_coordinate(const Number &x_min, const Number &h,
+                                const long long int i) {
+    return x_min + (Number(i) - Number(1) / Number(2)) * h;
+  }
+
+
+  Scalar grid_coordinate(const long long int i) const {
+    return grid_coordinate(param.r_min, grid_spacing(), i);
+  }
+
+
+  Scalar grid_spacing() const {
+    return (param.r_max - param.r_min) / Scalar(param.N - 1);
   }
 
 
@@ -248,18 +264,26 @@ struct SdSMasterPDEPrecise {
 
     const Scalar beta = source_param.beta;
     const Scalar rc_power = pow(r_cosmological, -beta);
+    const Scalar h = grid_spacing();
 
 #pragma omp parallel for schedule(static)
     for(long long int i = 0; i < grid_size; ++i) {
+      const Scalar x = grid_coordinate(param.r_min, h, i);
       Scalar profile = 0;
       switch(source_param.profile) {
         case SdSSourceProfile::ArealPower:
           profile = pow(r[i], -beta);
           break;
         case SdSSourceProfile::HorizonSubtractedArealPower: {
-          const Scalar log_ratio = stable_log1p(-rho_cosmological[i]
-                                                / r_cosmological);
-          profile = rc_power * stable_expm1(-beta * log_ratio);
+          const Scalar ratio = -rho_cosmological[i] / r_cosmological;
+          // The vendored Boost wrappers call these libquadmath functions but
+          // rely on an implicit __float128 conversion rejected by GCC 15.
+          const Scalar log_ratio(
+              Scalar::backend_type(log1pq(ratio.backend().value())));
+          const Scalar exponent = -beta * log_ratio;
+          const Scalar difference(
+              Scalar::backend_type(expm1q(exponent.backend().value())));
+          profile = rc_power * difference;
           break;
         }
         case SdSSourceProfile::LocalScalar:
@@ -267,10 +291,10 @@ struct SdSMasterPDEPrecise {
           break;
         case SdSSourceProfile::TortoisePower: {
           Scalar cutoff = 0;
-          if(r_ast[i] >= source_param.X1) {
+          if(x >= source_param.X1) {
             cutoff = 1;
-          } else if(r_ast[i] > source_param.X0) {
-            const Scalar z = (r_ast[i] - source_param.X0)
+          } else if(x > source_param.X0) {
+            const Scalar z = (x - source_param.X0)
                              / (source_param.X1 - source_param.X0);
             const Scalar left = exp(-Scalar(1) / z);
             const Scalar right = exp(-Scalar(1) / (Scalar(1) - z));
@@ -279,7 +303,7 @@ struct SdSMasterPDEPrecise {
           profile = cutoff == 0
               ? Scalar(0)
               : cutoff
-                    * pow(source_param.L / (r_ast[i] + source_param.x0), beta);
+                    * pow(source_param.L / (x + source_param.x0), beta);
           break;
         }
       }
@@ -296,10 +320,17 @@ struct SdSMasterPDEPrecise {
 
   Scalar translated_source_value(const long long int i,
                                  const Scalar &t) const {
+    return translated_source_value(i, t, grid_spacing());
+  }
+
+
+  Scalar translated_source_value(const long long int i, const Scalar &t,
+                                 const Scalar &h) const {
     if(!has_translated_source || t < translated_source_param.onset_time) {
       return 0;
     }
-    const Scalar z = (t - r_ast[i] - translated_source_param.u_center)
+    const Scalar x = grid_coordinate(param.r_min, h, i);
+    const Scalar z = (t - x - translated_source_param.u_center)
                      / translated_source_param.sigma;
     if(abs(z) > translated_source_param.cutoff_sigma) return 0;
     Scalar waveform = waveform_prefactor * exp(-z * z / Scalar(2));
@@ -321,7 +352,6 @@ struct SdSMasterPDEPrecise {
     Scalar *__restrict__ dpsi = derivative.data();
     Scalar *__restrict__ dpi = derivative.data() + grid_size;
     const Scalar *__restrict__ potential = V.data();
-    const Scalar *__restrict__ center = center_factor.data();
 
     const bool has_generic_source = !has_translated_source
                                     && static_cast<bool>(Q);
@@ -335,12 +365,12 @@ struct SdSMasterPDEPrecise {
 
     long long int source_begin = 1;
     long long int source_end = 0;
+    const Scalar h = grid_spacing();
     if(has_translated_source && t >= translated_source_param.onset_time) {
       const Scalar radius = translated_source_param.cutoff_sigma
                             * translated_source_param.sigma;
       const Scalar center_x = t - translated_source_param.u_center;
-      const Scalar first_x = param.r_min
-                             - Scalar(1) / (Scalar(2) * inv_h);
+      const Scalar first_x = grid_coordinate(param.r_min, h, 0);
       const Scalar begin_real = (center_x - radius - first_x) * inv_h;
       const Scalar end_real = (center_x + radius - first_x) * inv_h;
       if(!(end_real < 0 || begin_real > Scalar(grid_size - 1))) {
@@ -355,120 +385,102 @@ struct SdSMasterPDEPrecise {
     const Scalar d2_factor = inv_h_sqr / Scalar(12);
     const Scalar near_factor = Scalar(16) * d2_factor;
     const Scalar far_factor = -d2_factor;
+    const Scalar center_coefficient = -Scalar(30) * d2_factor;
     const Scalar one_twelfth_inv_h = inv_h / Scalar(12);
 
     auto source_at = [&](const long long int i) -> Scalar {
       if(translated_active && i >= source_begin && i <= source_end) {
-        return translated_source_value(i, t);
+        return translated_source_value(i, t, h);
       }
       if(has_generic_source) return generic_source[i];
       return Scalar(0);
     };
 
-#pragma omp parallel
-    {
-      if(!translated_active && !has_generic_source) {
-#pragma omp for schedule(static)
-        for(long long int i = 2; i <= grid_size - 3; ++i) {
-          const Scalar near_sum = psi[i - 1] + psi[i + 1];
-          const Scalar far_sum = psi[i - 2] + psi[i + 2];
-          dpi[i] = near_factor * near_sum + far_factor * far_sum
-                   + center[i] * psi[i];
-          dpsi[i] = pi[i];
-        }
-      } else if(translated_active) {
-#pragma omp for schedule(static)
-        for(long long int i = 2; i <= grid_size - 3; ++i) {
-          const Scalar near_sum = psi[i - 1] + psi[i + 1];
-          const Scalar far_sum = psi[i - 2] + psi[i + 2];
-          dpi[i] = near_factor * near_sum + far_factor * far_sum
-                   + center[i] * psi[i];
-          if(i >= source_begin && i <= source_end) {
-            dpi[i] += translated_source_value(i, t);
-          }
-          dpsi[i] = pi[i];
-        }
-      } else {
-#pragma omp for schedule(static)
-        for(long long int i = 2; i <= grid_size - 3; ++i) {
-          const Scalar near_sum = psi[i - 1] + psi[i + 1];
-          const Scalar far_sum = psi[i - 2] + psi[i + 2];
-          dpi[i] = near_factor * near_sum + far_factor * far_sum
-                   + center[i] * psi[i] + generic_source[i];
-          dpsi[i] = pi[i];
-        }
+    if(!translated_active && !has_generic_source) {
+#pragma omp parallel for schedule(static)
+      for(long long int i = 2; i <= grid_size - 3; ++i) {
+        const Scalar near_sum = psi[i - 1] + psi[i + 1];
+        const Scalar far_sum = psi[i - 2] + psi[i + 2];
+        dpi[i] = near_factor * near_sum + far_factor * far_sum
+                 + (center_coefficient - potential[i]) * psi[i];
+        dpsi[i] = pi[i];
       }
-
-#pragma omp single nowait
-      {
-        dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
-                  - Scalar(36) * pi[2] + Scalar(16) * pi[3]
-                  - Scalar(3) * pi[4]) * one_twelfth_inv_h
-                 - potential[0] * psi[0] + source_at(0);
-        dpsi[0] = pi[0];
-
-        dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
-                  + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
-                 * d2_factor - potential[1] * psi[1] + source_at(1);
-        dpsi[1] = pi[1];
-
-        const long long int n2 = grid_size - 2;
-        const long long int n1 = grid_size - 1;
-        dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
-                   + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
-                   + Scalar(11) * psi[n1]) * d2_factor
-                  - potential[n2] * psi[n2] + source_at(n2);
-        dpsi[n2] = pi[n2];
-
-        dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
-                   + Scalar(16) * pi[grid_size - 4]
-                   - Scalar(36) * pi[grid_size - 3]
-                   + Scalar(48) * pi[n2] - Scalar(25) * pi[n1])
-                  * one_twelfth_inv_h - potential[n1] * psi[n1]
-                  + source_at(n1);
-        dpsi[n1] = pi[n1];
+    } else if(translated_active) {
+#pragma omp parallel for schedule(static)
+      for(long long int i = 2; i <= grid_size - 3; ++i) {
+        const Scalar near_sum = psi[i - 1] + psi[i + 1];
+        const Scalar far_sum = psi[i - 2] + psi[i + 2];
+        dpi[i] = near_factor * near_sum + far_factor * far_sum
+                 + (center_coefficient - potential[i]) * psi[i];
+        if(i >= source_begin && i <= source_end) {
+          dpi[i] += translated_source_value(i, t, h);
+        }
+        dpsi[i] = pi[i];
+      }
+    } else {
+#pragma omp parallel for schedule(static)
+      for(long long int i = 2; i <= grid_size - 3; ++i) {
+        const Scalar near_sum = psi[i - 1] + psi[i + 1];
+        const Scalar far_sum = psi[i - 2] + psi[i + 2];
+        dpi[i] = near_factor * near_sum + far_factor * far_sum
+                 + (center_coefficient - potential[i]) * psi[i]
+                 + generic_source[i];
+        dpsi[i] = pi[i];
       }
     }
+
+    dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
+              - Scalar(36) * pi[2] + Scalar(16) * pi[3]
+              - Scalar(3) * pi[4]) * one_twelfth_inv_h
+             - potential[0] * psi[0] + source_at(0);
+    dpsi[0] = pi[0];
+
+    dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
+              + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
+             * d2_factor - potential[1] * psi[1] + source_at(1);
+    dpsi[1] = pi[1];
+
+    const long long int n2 = grid_size - 2;
+    const long long int n1 = grid_size - 1;
+    dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
+               + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
+               + Scalar(11) * psi[n1]) * d2_factor
+              - potential[n2] * psi[n2] + source_at(n2);
+    dpsi[n2] = pi[n2];
+
+    dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
+               + Scalar(16) * pi[grid_size - 4]
+               - Scalar(36) * pi[grid_size - 3]
+               + Scalar(48) * pi[n2] - Scalar(25) * pi[n1])
+              * one_twelfth_inv_h - potential[n1] * psi[n1]
+              + source_at(n1);
+    dpsi[n1] = pi[n1];
   }
 
  private:
   struct GeometryHP {
-    HighPrecisionScalar mass;
     HighPrecisionScalar lambda;
     HighPrecisionScalar rb;
     HighPrecisionScalar rc;
     HighPrecisionScalar ro;
     HighPrecisionScalar delta;
-    HighPrecisionScalar kappa_b;
-    HighPrecisionScalar kappa_c;
     HighPrecisionScalar inv_fp_b;
     HighPrecisionScalar inv_fp_c;
     HighPrecisionScalar inv_fp_o;
-    HighPrecisionScalar reference_r;
-    HighPrecisionScalar reference_x;
-    HighPrecisionScalar reference_rb;
-    HighPrecisionScalar reference_rc;
-    HighPrecisionScalar reference_ro;
-    HighPrecisionScalar midpoint_x;
+    HighPrecisionScalar tortoise_constant;
+    HighPrecisionScalar tortoise_roundoff;
   };
 
-  struct EvaluationHP {
+  struct TortoisePointHP {
+    // y = log[(r-r_b)/(r_c-r)] maps the static region to the real line.
+    HighPrecisionScalar y;
     HighPrecisionScalar x;
-    HighPrecisionScalar derivative;
-    HighPrecisionScalar second_derivative;
+    HighPrecisionScalar dx_dy;
+    HighPrecisionScalar d2x_dy2;
     HighPrecisionScalar r;
     HighPrecisionScalar rho_b;
     HighPrecisionScalar rho_c;
-    HighPrecisionScalar r_minus_ro;
-  };
-
-  struct InversionHP {
-    HighPrecisionScalar r;
-    HighPrecisionScalar rho_b;
-    HighPrecisionScalar rho_c;
-    HighPrecisionScalar r_minus_ro;
-    HighPrecisionScalar residual;
-    bool success;
+    bool success = false;
   };
 
 
@@ -514,49 +526,30 @@ struct SdSMasterPDEPrecise {
   }
 
 
-  static Scalar stable_log1p(const Scalar &value) {
-    if(abs(value) >= Scalar("0.01")) return log(Scalar(1) + value);
-    Scalar sum = 0;
-    Scalar power = value;
-    for(int order = 1; order <= 160; ++order) {
-      const Scalar term = power / Scalar(order);
-      sum += (order % 2 == 1) ? term : -term;
-      if(abs(term) < Scalar("1e-38")) break;
-      power *= value;
-    }
-    return sum;
-  }
-
-
-  static Scalar stable_expm1(const Scalar &value) {
-    if(abs(value) >= Scalar("0.01")) return exp(value) - Scalar(1);
-    Scalar sum = value;
-    Scalar term = value;
-    for(int order = 2; order <= 160; ++order) {
-      term *= value / Scalar(order);
-      sum += term;
-      if(abs(term) < Scalar("1e-38")) break;
-    }
-    return sum;
-  }
-
-
   static GeometryHP make_geometry(const HighPrecisionScalar &mass,
                                   const HighPrecisionScalar &lambda) {
-    const HighPrecisionScalar pi =
-        boost::math::constants::pi<HighPrecisionScalar>();
-    const HighPrecisionScalar sqrt_lambda = sqrt(lambda);
-    const HighPrecisionScalar angle = acos(HighPrecisionScalar(3) * mass
-                                            * sqrt_lambda)
-                                      / HighPrecisionScalar(3);
+    auto cubic = [&](const HighPrecisionScalar &radius) {
+      return lambda * radius * radius * radius
+             - HighPrecisionScalar(3) * radius
+             + HighPrecisionScalar(6) * mass;
+    };
+    auto solve_root = [&](const HighPrecisionScalar &lower,
+                          const HighPrecisionScalar &upper) {
+      std::uintmax_t iterations = 1000;
+      const auto bracket = boost::math::tools::toms748_solve(
+          cubic, lower, upper,
+          boost::math::tools::eps_tolerance<HighPrecisionScalar>(
+              std::numeric_limits<HighPrecisionScalar>::digits - 8),
+          iterations);
+      return (bracket.first + bracket.second) / HighPrecisionScalar(2);
+    };
 
     GeometryHP geometry;
-    geometry.mass = mass;
     geometry.lambda = lambda;
-    geometry.rb = HighPrecisionScalar(2) / sqrt_lambda
-                  * cos(angle + pi / HighPrecisionScalar(3));
-    geometry.rc = HighPrecisionScalar(2) / sqrt_lambda
-                  * cos(angle - pi / HighPrecisionScalar(3));
+    geometry.rb = solve_root(HighPrecisionScalar(2) * mass,
+                             HighPrecisionScalar(3) * mass);
+    geometry.rc = solve_root(HighPrecisionScalar(3) * mass,
+                             sqrt(HighPrecisionScalar(3) / lambda));
     geometry.ro = -(geometry.rb + geometry.rc);
     geometry.delta = geometry.rc - geometry.rb;
 
@@ -568,27 +561,33 @@ struct SdSMasterPDEPrecise {
     const HighPrecisionScalar fp_b = f_prime(geometry.rb);
     const HighPrecisionScalar fp_c = f_prime(geometry.rc);
     const HighPrecisionScalar fp_o = f_prime(geometry.ro);
-    geometry.kappa_b = fp_b / HighPrecisionScalar(2);
-    geometry.kappa_c = -fp_c / HighPrecisionScalar(2);
     geometry.inv_fp_b = HighPrecisionScalar(1) / fp_b;
     geometry.inv_fp_c = HighPrecisionScalar(1) / fp_c;
     geometry.inv_fp_o = HighPrecisionScalar(1) / fp_o;
 
-    geometry.reference_r = HighPrecisionScalar(3) * mass;
-    geometry.reference_x = geometry.reference_r
-                           + HighPrecisionScalar(2) * mass
-                                 * log(HighPrecisionScalar("0.5"));
-    geometry.reference_rb = geometry.reference_r - geometry.rb;
-    geometry.reference_rc = geometry.rc - geometry.reference_r;
-    geometry.reference_ro = geometry.reference_r - geometry.ro;
-    geometry.midpoint_x = evaluate_y(geometry, HighPrecisionScalar(0)).x;
+    const HighPrecisionScalar reference_r = HighPrecisionScalar(3) * mass;
+    const HighPrecisionScalar reference_x = reference_r
+        + HighPrecisionScalar(2) * mass * log(HighPrecisionScalar("0.5"));
+    const HighPrecisionScalar reference_b = geometry.inv_fp_b
+        * log(reference_r - geometry.rb);
+    const HighPrecisionScalar reference_c = geometry.inv_fp_c
+        * log(geometry.rc - reference_r);
+    const HighPrecisionScalar reference_o = geometry.inv_fp_o
+        * log(reference_r - geometry.ro);
+    geometry.tortoise_constant = reference_x - reference_b - reference_c
+                                  - reference_o;
+    geometry.tortoise_roundoff = HighPrecisionScalar(10000)
+        * std::numeric_limits<HighPrecisionScalar>::epsilon()
+        * (HighPrecisionScalar(1) + abs(reference_x) + abs(reference_b)
+           + abs(reference_c) + abs(reference_o));
     return geometry;
   }
 
 
-  static EvaluationHP evaluate_y(const GeometryHP &geometry,
-                                 const HighPrecisionScalar &y) {
-    EvaluationHP result;
+  static TortoisePointHP evaluate_y(const GeometryHP &geometry,
+                                    const HighPrecisionScalar &y) {
+    TortoisePointHP result;
+    result.y = y;
     if(y >= 0) {
       const HighPrecisionScalar exponential = exp(-y);
       const HighPrecisionScalar denominator = HighPrecisionScalar(1)
@@ -603,102 +602,117 @@ struct SdSMasterPDEPrecise {
       result.rho_c = geometry.delta / denominator;
     }
     result.r = geometry.rb + result.rho_b;
-    result.r_minus_ro = geometry.rb - geometry.ro + result.rho_b;
+    const HighPrecisionScalar r_minus_ro = result.r - geometry.ro;
 
-    result.x = geometry.reference_x
-               + geometry.inv_fp_b
-                     * (log(result.rho_b) - log(geometry.reference_rb))
-               + geometry.inv_fp_c
-                     * (log(result.rho_c) - log(geometry.reference_rc))
-               + geometry.inv_fp_o
-                     * (log(result.r_minus_ro) - log(geometry.reference_ro));
+    result.x = geometry.tortoise_constant
+               + geometry.inv_fp_b * log(result.rho_b)
+               + geometry.inv_fp_c * log(result.rho_c)
+               + geometry.inv_fp_o * log(r_minus_ro);
 
     const HighPrecisionScalar prefactor =
         HighPrecisionScalar(3) / (geometry.lambda * geometry.delta);
-    result.derivative = prefactor * result.r / result.r_minus_ro;
+    result.dx_dy = prefactor * result.r / r_minus_ro;
     const HighPrecisionScalar dr_dy = result.rho_b * result.rho_c
                                       / geometry.delta;
-    result.second_derivative = prefactor * (-geometry.ro) * dr_dy
-                               / (result.r_minus_ro * result.r_minus_ro);
+    result.d2x_dy2 = prefactor * (-geometry.ro) * dr_dy
+                     / (r_minus_ro * r_minus_ro);
     return result;
   }
 
 
-  static InversionHP invert_tortoise(const GeometryHP &geometry,
-                                     const HighPrecisionScalar &target_x) {
+  static TortoisePointHP invert_tortoise(
+      const GeometryHP &geometry, const HighPrecisionScalar &target_x,
+      const TortoisePointHP *previous) {
     const HighPrecisionScalar tolerance("1e-80");
     const HighPrecisionScalar target_scale =
         HighPrecisionScalar(1) + abs(target_x);
-    if(abs(target_x - geometry.midpoint_x) <= tolerance * target_scale) {
-      const EvaluationHP midpoint = evaluate_y(geometry, HighPrecisionScalar(0));
-      return {midpoint.r, midpoint.rho_b, midpoint.rho_c,
-              midpoint.r_minus_ro, abs(midpoint.x - target_x), true};
-    }
+    const HighPrecisionScalar threshold = std::max(
+        tolerance * target_scale, geometry.tortoise_roundoff);
+    TortoisePointHP lower;
+    TortoisePointHP upper;
+    TortoisePointHP evaluation;
 
-    HighPrecisionScalar lower;
-    HighPrecisionScalar upper;
-    HighPrecisionScalar guess;
-    if(target_x < geometry.midpoint_x) {
-      upper = 0;
-      guess = HighPrecisionScalar(2) * geometry.kappa_b
-              * (target_x - geometry.midpoint_x);
-      lower = std::min(guess, HighPrecisionScalar(-1));
-      for(int expansion = 0;
-          evaluate_y(geometry, lower).x > target_x && expansion < 100;
-          ++expansion) {
-        lower = HighPrecisionScalar(2) * lower - HighPrecisionScalar(1);
+    if(previous != nullptr && previous->success && previous->x < target_x) {
+      lower = *previous;
+      // First-order continuation: dy/dx = 1/(dx/dy).
+      HighPrecisionScalar step = (target_x - previous->x) / previous->dx_dy;
+      if(!(step > 0)) step = HighPrecisionScalar(1);
+      evaluation = evaluate_y(geometry, previous->y + step);
+      if(evaluation.x >= target_x) {
+        upper = evaluation;
+      } else {
+        lower = evaluation;
+        for(int expansion = 0; expansion < 100; ++expansion) {
+          step *= HighPrecisionScalar(2);
+          upper = evaluate_y(geometry, previous->y + step);
+          if(upper.x >= target_x) break;
+          lower = upper;
+        }
       }
     } else {
-      lower = 0;
-      guess = HighPrecisionScalar(2) * geometry.kappa_c
-              * (target_x - geometry.midpoint_x);
-      upper = std::max(guess, HighPrecisionScalar(1));
-      for(int expansion = 0;
-          evaluate_y(geometry, upper).x < target_x && expansion < 100;
-          ++expansion) {
-        upper = HighPrecisionScalar(2) * upper + HighPrecisionScalar(1);
+      const TortoisePointHP middle = evaluate_y(
+          geometry, HighPrecisionScalar(0));
+      if(abs(middle.x - target_x) <= threshold) {
+        TortoisePointHP result = middle;
+        result.success = true;
+        return result;
       }
+      HighPrecisionScalar step = 1;
+      if(target_x < middle.x) {
+        upper = middle;
+        lower = evaluate_y(geometry, -step);
+        for(int expansion = 0;
+            lower.x > target_x && expansion < 100; ++expansion) {
+          step *= HighPrecisionScalar(2);
+          lower = evaluate_y(geometry, -step);
+        }
+      } else {
+        lower = middle;
+        upper = evaluate_y(geometry, step);
+        for(int expansion = 0;
+            upper.x < target_x && expansion < 100; ++expansion) {
+          step *= HighPrecisionScalar(2);
+          upper = evaluate_y(geometry, step);
+        }
+      }
+      evaluation = evaluate_y(
+          geometry, (lower.y + upper.y) / HighPrecisionScalar(2));
     }
 
-    if(evaluate_y(geometry, lower).x > target_x
-       || evaluate_y(geometry, upper).x < target_x) {
-      return {0, 0, 0, 0, std::numeric_limits<HighPrecisionScalar>::infinity(),
-              false};
+    if(lower.x > target_x || upper.x < target_x) {
+      return evaluation;
     }
 
-    HighPrecisionScalar y = std::max(lower, std::min(upper, guess));
-    if(y == lower || y == upper) y = (lower + upper) / 2;
-    EvaluationHP evaluation = evaluate_y(geometry, y);
     bool converged = false;
 
     for(int iteration = 0; iteration < 120; ++iteration) {
+      // Its magnitude tests convergence, its sign updates the monotonic
+      // bracket, and its value enters the safeguarded Halley correction.
       const HighPrecisionScalar residual = evaluation.x - target_x;
-      if(abs(residual) <= tolerance * target_scale) {
+      if(abs(residual) <= threshold) {
         converged = true;
         break;
       }
-      if(residual < 0) lower = y;
-      else upper = y;
+      if(residual < 0) lower = evaluation;
+      else upper = evaluation;
 
       const HighPrecisionScalar denominator =
-          HighPrecisionScalar(2) * evaluation.derivative
-              * evaluation.derivative
-          - residual * evaluation.second_derivative;
-      HighPrecisionScalar candidate = (lower + upper) / 2;
+          HighPrecisionScalar(2) * evaluation.dx_dy * evaluation.dx_dy
+          - residual * evaluation.d2x_dy2;
+      HighPrecisionScalar candidate =
+          (lower.y + upper.y) / HighPrecisionScalar(2);
       if(denominator != 0) {
-        const HighPrecisionScalar halley = y
-            - HighPrecisionScalar(2) * residual * evaluation.derivative
+        const HighPrecisionScalar halley = evaluation.y
+            - HighPrecisionScalar(2) * residual * evaluation.dx_dy
                   / denominator;
-        if(halley > lower && halley < upper) candidate = halley;
+        if(halley > lower.y && halley < upper.y) candidate = halley;
       }
-      y = candidate;
-      evaluation = evaluate_y(geometry, y);
+      evaluation = evaluate_y(geometry, candidate);
     }
 
-    const HighPrecisionScalar residual = abs(evaluation.x - target_x);
-    converged = converged || residual <= tolerance * target_scale;
-    return {evaluation.r, evaluation.rho_b, evaluation.rho_c,
-            evaluation.r_minus_ro, residual, converged};
+    const HighPrecisionScalar final_residual = abs(evaluation.x - target_x);
+    evaluation.success = converged || final_residual <= threshold;
+    return evaluation;
   }
 };
 

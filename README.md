@@ -18,8 +18,8 @@ Additional precise CPU functionality:
 1. Sourced Schwarzschild-de Sitter master equations for the conformal scalar,
    electromagnetic, and axial gravitational sectors, with the multipole set in
    the equation parameters.
-2. Cancellation-free 100-decimal geometry preprocessing and binary128 time
-   evolution.
+2. Cancellation-free 100-decimal horizon root finding and neighbor-predicted
+   tortoise inversion, followed by binary128 time evolution.
 3. Areal-power, horizon-subtracted, local-scalar, and algebraic tortoise-source
    profiles with Gaussian or zero-mean Gaussian-derivative waveforms.
 
