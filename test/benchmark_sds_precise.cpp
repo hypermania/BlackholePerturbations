@@ -21,6 +21,7 @@ using Equation = SdSMasterPDEPrecise;
 using Param = SdSMasterPDEPreciseParam;
 using Scalar = Equation::Scalar;
 using State = Equation::State;
+using Vector = Equation::Vector;
 
 double median(std::vector<double> samples) {
   std::sort(samples.begin(), samples.end());
@@ -54,30 +55,9 @@ double run_operator(Equation &equation, const State &state, State &derivative,
       .count();
 }
 
-std::pair<long long int, long long int> source_window(
-    const Equation &equation, const Scalar &time) {
-  if(!equation.has_translated_source
-     || time < equation.translated_source_param.onset_time) {
-    return {1, 0};
-  }
-  const Scalar radius = equation.translated_source_param.cutoff_sigma
-                        * equation.translated_source_param.sigma;
-  const Scalar center_x = time - equation.translated_source_param.u_center;
-  const Scalar h = equation.grid_space();
-  const Scalar first_x = Equation::grid_coordinate(
-      equation.param.r_min, h, 0);
-  const Scalar begin_real = (center_x - radius - first_x) * equation.inv_h;
-  const Scalar end_real = (center_x + radius - first_x) * equation.inv_h;
-  if(end_real < 0 || begin_real > Scalar(equation.grid_size - 1)) return {1, 0};
-  const long long int begin = ceil(std::max(Scalar(0), begin_real))
-                                  .convert_to<long long int>();
-  const long long int end = floor(std::min(
-      Scalar(equation.grid_size - 1), end_real)).convert_to<long long int>();
-  return {begin, end};
-}
-
 void ceiling_rhs(const Equation &equation, const State &state,
-                 State &derivative, const Scalar &time, const bool sourced) {
+                 State &derivative, const Scalar &time,
+                 Vector &source_workspace) {
   const long long int grid_size = equation.grid_size;
   const Scalar *__restrict__ psi = state.data();
   const Scalar *__restrict__ pi = state.data() + grid_size;
@@ -89,46 +69,26 @@ void ceiling_rhs(const Equation &equation, const State &state,
   const Scalar far_factor = -d2_factor;
   const Scalar center_coefficient = -Scalar(30) * d2_factor;
   const Scalar d1_factor = equation.inv_h / Scalar(12);
-  const Scalar h = equation.grid_space();
-  const auto [source_begin, source_end] = sourced
-      ? source_window(equation, time) : std::pair<long long int, long long int>{1, 0};
-  const bool source_active = source_begin <= source_end;
+  if(equation.Q) equation.Q(time, source_workspace);
+  const Scalar *__restrict__ source = source_workspace.data();
 
-  if(source_active) {
 #pragma omp parallel for schedule(static)
-    for(long long int i = 2; i <= grid_size - 3; ++i) {
-      const Scalar near_sum = psi[i - 1] + psi[i + 1];
-      const Scalar far_sum = psi[i - 2] + psi[i + 2];
-      dpi[i] = near_factor * near_sum + far_factor * far_sum
-               + (center_coefficient - potential[i]) * psi[i];
-      if(i >= source_begin && i <= source_end) {
-        dpi[i] += equation.translated_source_value(i, time, h);
-      }
-      dpsi[i] = pi[i];
-    }
-  } else {
-#pragma omp parallel for schedule(static)
-    for(long long int i = 2; i <= grid_size - 3; ++i) {
-      const Scalar near_sum = psi[i - 1] + psi[i + 1];
-      const Scalar far_sum = psi[i - 2] + psi[i + 2];
-      dpi[i] = near_factor * near_sum + far_factor * far_sum
-               + (center_coefficient - potential[i]) * psi[i];
-      dpsi[i] = pi[i];
-    }
+  for(long long int i = 2; i <= grid_size - 3; ++i) {
+    const Scalar near_sum = psi[i - 1] + psi[i + 1];
+    const Scalar far_sum = psi[i - 2] + psi[i + 2];
+    dpi[i] = near_factor * near_sum + far_factor * far_sum
+             + (center_coefficient - potential[i]) * psi[i] + source[i];
+    dpsi[i] = pi[i];
   }
 
-  auto source_at = [&](const long long int i) {
-    return source_active && i >= source_begin && i <= source_end
-        ? equation.translated_source_value(i, time, h) : Scalar(0);
-  };
   dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
             - Scalar(36) * pi[2] + Scalar(16) * pi[3]
             - Scalar(3) * pi[4]) * d1_factor
-           - potential[0] * psi[0] + source_at(0);
+           - potential[0] * psi[0] + source[0];
   dpsi[0] = pi[0];
   dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
             + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
-           * d2_factor - potential[1] * psi[1] + source_at(1);
+           * d2_factor - potential[1] * psi[1] + source[1];
   dpsi[1] = pi[1];
 
   const long long int n2 = grid_size - 2;
@@ -136,23 +96,24 @@ void ceiling_rhs(const Equation &equation, const State &state,
   dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
              + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
              + Scalar(11) * psi[n1]) * d2_factor
-            - potential[n2] * psi[n2] + source_at(n2);
+            - potential[n2] * psi[n2] + source[n2];
   dpsi[n2] = pi[n2];
   dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
              + Scalar(16) * pi[grid_size - 4]
              - Scalar(36) * pi[grid_size - 3] + Scalar(48) * pi[n2]
              - Scalar(25) * pi[n1]) * d1_factor
-            - potential[n1] * psi[n1] + source_at(n1);
+            - potential[n1] * psi[n1] + source[n1];
   dpsi[n1] = pi[n1];
 }
 
 double run_ceiling(const Equation &equation, const State &state,
                    State &derivative, const int iterations,
-                   const Scalar &time, const bool sourced) {
-  ceiling_rhs(equation, state, derivative, time, sourced);
+                   const Scalar &time) {
+  Vector source_workspace = Vector::Zero(equation.grid_size);
+  ceiling_rhs(equation, state, derivative, time, source_workspace);
   const auto start = std::chrono::steady_clock::now();
   for(int iteration = 0; iteration < iterations; ++iteration) {
-    ceiling_rhs(equation, state, derivative, time, sourced);
+    ceiling_rhs(equation, state, derivative, time, source_workspace);
   }
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
       .count();
@@ -203,6 +164,7 @@ int main(int argc, char **argv) {
 
   State state(2 * equation.grid_size);
   State derivative(2 * equation.grid_size);
+  Vector ceiling_source = Vector::Zero(equation.grid_size);
   for(long long int i = 0; i < equation.grid_size; ++i) {
     state[i] = Scalar("0.25") + Scalar(i % 31) * Scalar("1e-4");
     state[equation.grid_size + i] = Scalar("-0.125")
@@ -226,10 +188,10 @@ int main(int argc, char **argv) {
     if(sample % 2 == 0) {
       operator_seconds = run_operator(equation, state, derivative, iterations, time);
       ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time, false);
+          equation, state, derivative, iterations, time);
     } else {
       ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time, false);
+          equation, state, derivative, iterations, time);
       operator_seconds = run_operator(equation, state, derivative, iterations, time);
     }
     operator_samples.push_back(operator_seconds);
@@ -242,7 +204,7 @@ int main(int argc, char **argv) {
   equation(state, derivative, time);
   const State homogeneous_reference = derivative;
   const Scalar thread_error = max_difference(derivative, one_thread_reference);
-  ceiling_rhs(equation, state, derivative, time, false);
+  ceiling_rhs(equation, state, derivative, time, ceiling_source);
   const Scalar ceiling_error = max_difference(derivative, homogeneous_reference);
 
   SdSTranslatedSourceParam source;
@@ -256,7 +218,12 @@ int main(int argc, char **argv) {
   source.x0 = 100;
   source.X0 = 0;
   source.X1 = 20;
-  equation.set_translated_gaussian_source(source);
+  SdSSource translated_source(source);
+  translated_source.initialize(
+      equation.param.r_min, equation.grid_space(), equation.grid_size,
+      equation.r_cosmological, equation.r, equation.rho_cosmological,
+      equation.f);
+  equation.Q = std::move(translated_source);
 
   operator_samples.clear();
   ceiling_samples.clear();
@@ -267,10 +234,10 @@ int main(int argc, char **argv) {
     if(sample % 2 == 0) {
       operator_seconds = run_operator(equation, state, derivative, iterations, time);
       ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time, true);
+          equation, state, derivative, iterations, time);
     } else {
       ceiling_seconds = run_ceiling(
-          equation, state, derivative, iterations, time, true);
+          equation, state, derivative, iterations, time);
       operator_seconds = run_operator(equation, state, derivative, iterations, time);
     }
     operator_samples.push_back(operator_seconds);
@@ -282,7 +249,7 @@ int main(int argc, char **argv) {
   const double sourced_efficiency = median(efficiencies);
   equation(state, derivative, time);
   const State sourced_reference = derivative;
-  ceiling_rhs(equation, state, derivative, time, true);
+  ceiling_rhs(equation, state, derivative, time, ceiling_source);
   const Scalar sourced_ceiling_error = max_difference(derivative, sourced_reference);
 
   const auto [one_thread_step_seconds, one_thread_step_state] =

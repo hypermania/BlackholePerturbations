@@ -559,7 +559,6 @@ void run_sds_precise_eqn(void) {
   param.delta_t = delta_t;
   save_param_for_Mathematica(param, dir);
 
-  Equation equation(param);
   SdSTranslatedSourceParam source;
   source.profile = profile;
   source.waveform = waveform;
@@ -573,7 +572,7 @@ void run_sds_precise_eqn(void) {
   source.x0 = 100;
   source.X0 = 0;
   source.X1 = 20;
-  equation.set_translated_gaussian_source(source);
+  Equation equation(param, SdSSource(source));
 
   const double observer_x = 50.0;
   const long long int observer_index = r_ast_to_i(

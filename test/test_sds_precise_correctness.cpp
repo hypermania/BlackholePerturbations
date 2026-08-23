@@ -459,33 +459,45 @@ void check_source_profiles() {
   SdSTranslatedSourceParam source;
   source.beta = Scalar("2.5");
   source.cutoff_sigma = 10;
+  source.onset_time = Scalar("-1e6");
+
+  auto profile_at = [&](const SdSTranslatedSourceParam &source_param,
+                        const long long int i) {
+    SdSSource Q(source_param);
+    Q.initialize(equation.param.r_min, equation.grid_space(),
+                 equation.grid_size, equation.r_cosmological,
+                 equation.r, equation.rho_cosmological, equation.f);
+    Vector values(equation.grid_size);
+    Q(equation.grid_coordinate(i) + source_param.u_center, values);
+    const Scalar pi = boost::math::constants::pi<Scalar>();
+    const Scalar normalization = source_param.amplitude
+        / (sqrt(Scalar(2) * pi) * source_param.sigma);
+    return values[i] / normalization;
+  };
 
   source.profile = SdSSourceProfile::ArealPower;
-  equation.set_translated_gaussian_source(source);
   for(long long int i : {0LL, 60LL, 120LL}) {
-    require(abs(equation.translated_source_spatial[i]
-                - pow(equation.r[i], -source.beta))
+    require(abs(profile_at(source, i) - pow(equation.r[i], -source.beta))
                 < Scalar("2e-31"),
             "areal-power source profile");
   }
 
   source.profile = SdSSourceProfile::HorizonSubtractedArealPower;
-  equation.set_translated_gaussian_source(source);
   const long long int right = equation.grid_size - 1;
-  require(equation.translated_source_spatial[right] > 0,
+  const Scalar subtracted_right = profile_at(source, right);
+  require(subtracted_right > 0,
           "subtracted source remains nonzero near cosmological horizon");
   const Scalar leading = source.beta
       * pow(equation.r_cosmological, -source.beta - Scalar(1))
       * equation.rho_cosmological[right];
-  require(abs(equation.translated_source_spatial[right] / leading - Scalar(1))
+  require(abs(subtracted_right / leading - Scalar(1))
               < Scalar("1e-25"),
           "subtracted source has stable horizon expansion");
 
   source.profile = SdSSourceProfile::LocalScalar;
-  equation.set_translated_gaussian_source(source);
   for(long long int i : {0LL, 60LL, 120LL}) {
     const Scalar expected = equation.f[i] * pow(equation.r[i], -source.beta);
-    require(abs(equation.translated_source_spatial[i] - expected)
+    require(abs(profile_at(source, i) - expected)
                 < Scalar("2e-31") * std::max(Scalar(1), abs(expected)),
             "local scalar source profile");
   }
@@ -495,25 +507,38 @@ void check_source_profiles() {
   source.x0 = 10;
   source.X0 = 0;
   source.X1 = 20;
-  equation.set_translated_gaussian_source(source);
   for(long long int i = 0; i < equation.grid_size; ++i) {
     const Scalar x = equation.grid_coordinate(i);
     if(x <= source.X0) {
-      require(equation.translated_source_spatial[i] == 0,
+      require(profile_at(source, i) == 0,
               "tortoise profile vanishes below cutoff");
     }
     if(x >= source.X1) {
       const Scalar expected = pow(source.L / (x + source.x0), source.beta);
-      require(abs(equation.translated_source_spatial[i] - expected)
+      require(abs(profile_at(source, i) - expected)
                   < Scalar("2e-31") * std::max(Scalar(1), abs(expected)),
               "tortoise profile above cutoff");
     }
   }
 
+  source.beta = 0;
+  source.profile = SdSSourceProfile::ArealPower;
+  require(profile_at(source, 60) == 1,
+          "beta zero gives constant areal-power profile");
+  source.profile = SdSSourceProfile::HorizonSubtractedArealPower;
+  require(profile_at(source, right) == 0,
+          "beta zero gives zero horizon-subtracted profile");
+  source.profile = SdSSourceProfile::LocalScalar;
+  require(profile_at(source, 60) == equation.f[60],
+          "beta zero gives metric-function local profile");
+  source.profile = SdSSourceProfile::TortoisePower;
+  require(profile_at(source, 120) == 1,
+          "beta zero gives unit tortoise profile above cutoff");
+
   bool rejected = false;
   try {
     source.X1 = source.X0;
-    equation.set_translated_gaussian_source(source);
+    const SdSSource invalid(source);
   } catch(const std::invalid_argument &) {
     rejected = true;
   }
@@ -521,7 +546,8 @@ void check_source_profiles() {
 }
 
 void check_rhs_and_sources() {
-  Equation equation(make_param(1, 2, 79, "-35", "70"));
+  const Param param = make_param(1, 2, 79, "-35", "70");
+  Equation equation(param);
   const State state = make_state(equation.grid_size, 7);
   const Vector zero = Vector::Zero(equation.grid_size);
   const Vector source = make_source(equation.grid_size, 7);
@@ -540,19 +566,20 @@ void check_rhs_and_sources() {
                    "homogeneous thread reproducibility");
   }
 
-  equation.set_generic_source(
-      [source](const Scalar &, Vector &result) { result = source; });
+  Equation generic_equation(param, SdSSource(SdSSource::GenericSource(
+      [source](const Scalar &, Vector &result) { result = source; })));
   State generic(2 * equation.grid_size);
-  equation(state, generic, Scalar("0.375"));
-  compare_states(generic, reference_rhs(equation, state, source),
+  generic_equation(state, generic, Scalar("0.375"));
+  compare_states(generic, reference_rhs(generic_equation, state, source),
                  Scalar("2e-27"), "generic source RHS");
 
-  equation.set_generic_source([&](const Scalar &, Vector &result) {
-    result.resize(equation.grid_size - 1);
-  });
+  Equation wrong_size_equation(param, SdSSource(SdSSource::GenericSource(
+      [&](const Scalar &, Vector &result) {
+        result.resize(equation.grid_size - 1);
+      })));
   bool rejected_source_size = false;
   try {
-    equation(state, generic, Scalar("0.375"));
+    wrong_size_equation(state, generic, Scalar("0.375"));
   } catch(const std::invalid_argument &) {
     rejected_source_size = true;
   }
@@ -565,37 +592,73 @@ void check_rhs_and_sources() {
   translated.sigma = 2;
   translated.cutoff_sigma = 8;
   translated.onset_time = Scalar("0.1");
-  equation.set_translated_gaussian_source(translated);
+  Equation translated_equation(param, SdSSource(translated));
 
   const Scalar time("0.375");
   Vector translated_values(equation.grid_size);
-  for(long long int i = 0; i < equation.grid_size; ++i) {
-    translated_values[i] = equation.translated_source_value(i, time);
-  }
+  translated_equation.Q(time, translated_values);
   State translated_rhs(2 * equation.grid_size);
-  equation(state, translated_rhs, time);
+  translated_equation(state, translated_rhs, time);
   compare_states(translated_rhs,
-                 reference_rhs(equation, state, translated_values),
+                 reference_rhs(translated_equation, state, translated_values),
                  Scalar("2e-27"), "translated Gaussian source RHS");
 
   State before_onset(2 * equation.grid_size);
-  equation(state, before_onset, Scalar("0.05"));
+  translated_equation(state, before_onset, Scalar("0.05"));
   compare_states(before_onset, homogeneous, Scalar(0),
                  "translated source turn-on");
 
   translated.waveform = SdSWaveform::GaussianDerivative;
-  equation.set_translated_gaussian_source(translated);
+  Equation derivative_equation(param, SdSSource(translated));
   const long long int i = equation.grid_size / 2;
   const Scalar center_time = equation.grid_coordinate(i)
                              + translated.u_center;
-  require(equation.translated_source_value(i, center_time) == 0,
+  Vector center_values(equation.grid_size);
+  Vector left_values(equation.grid_size);
+  Vector right_values(equation.grid_size);
+  derivative_equation.Q(center_time, center_values);
+  derivative_equation.Q(center_time - translated.sigma, left_values);
+  derivative_equation.Q(center_time + translated.sigma, right_values);
+  require(center_values[i] == 0,
           "Gaussian derivative vanishes at its center");
-  const Scalar left = equation.translated_source_value(
-      i, center_time - translated.sigma);
-  const Scalar right = equation.translated_source_value(
-      i, center_time + translated.sigma);
-  require(abs(left + right) < Scalar("1e-31"),
+  require(abs(left_values[i] + right_values[i]) < Scalar("1e-31"),
           "Gaussian derivative is zero-mean and antisymmetric");
+
+  SdSSpacetimeGaussianSourceParam green;
+  green.amplitude = Scalar("1.75");
+  green.r_ast_center = equation.grid_coordinate(i);
+  green.t_center = Scalar("0.625");
+  green.sigma = Scalar("1.25");
+  green.cutoff_sigma = 10;
+  Equation green_equation(param, SdSSource(green));
+  Vector green_values(equation.grid_size);
+  green_equation.Q(green.t_center, green_values);
+  const Scalar pi = boost::math::constants::pi<Scalar>();
+  const Scalar normalization = green.amplitude
+      / (sqrt(Scalar(2) * pi) * green.sigma);
+  require(abs(green_values[i] - normalization) < Scalar("2e-31"),
+          "spacetime Gaussian has requested normalization at its center");
+  const long long int j = i + 3;
+  const Scalar dx = equation.grid_coordinate(j) - green.r_ast_center;
+  const Scalar expected_spatial = normalization
+      * exp(-dx * dx / (green.sigma * green.sigma));
+  require(abs(green_values[j] - expected_spatial) < Scalar("2e-31"),
+          "spacetime Gaussian has exp(-dx^2/sigma^2) spatial profile");
+  green_equation.Q(green.t_center + green.sigma, green_values);
+  require(abs(green_values[i] - normalization * exp(Scalar(-1)))
+              < Scalar("2e-31"),
+          "spacetime Gaussian has exp(-dt^2/sigma^2) time profile");
+  green_equation.Q(green.t_center, green_values);
+  State green_rhs(2 * equation.grid_size);
+  green_equation(state, green_rhs, green.t_center);
+  compare_states(green_rhs,
+                 reference_rhs(green_equation, state, green_values),
+                 Scalar("2e-27"), "spacetime Gaussian source RHS");
+  green_equation.Q(green.t_center
+                       + Scalar("1.01") * green.cutoff_sigma * green.sigma,
+                   green_values);
+  require(green_values.abs().maxCoeff() == 0,
+          "spacetime Gaussian vanishes beyond its numerical cutoff");
 }
 
 struct ReferenceSystem {
@@ -609,10 +672,10 @@ struct ReferenceSystem {
 void check_dopri5_trajectory() {
   using Stepper = boost::numeric::odeint::runge_kutta_dopri5<
       State, Scalar, State, Scalar>;
-  Equation equation(make_param(2, 3, 63, "-30", "60"));
-  const Vector source = make_source(equation.grid_size, 17);
-  equation.set_generic_source(
-      [source](const Scalar &, Vector &result) { result = source; });
+  const Param param = make_param(2, 3, 63, "-30", "60");
+  const Vector source = make_source(param.N + 1, 17);
+  Equation equation(param, SdSSource(SdSSource::GenericSource(
+      [source](const Scalar &, Vector &result) { result = source; })));
   const ReferenceSystem reference{equation, source};
 
   State optimized_state = make_state(equation.grid_size, 17);

@@ -20,8 +20,10 @@ Additional precise CPU functionality:
    the equation parameters.
 2. Cancellation-free 100-decimal horizon root finding and neighbor-predicted
    tortoise inversion, followed by binary128 time evolution.
-3. Areal-power, horizon-subtracted, local-scalar, and algebraic tortoise-source
-   profiles with Gaussian or zero-mean Gaussian-derivative waveforms.
+3. A standalone `SdSSource` interface for custom callbacks; areal-power,
+   horizon-subtracted, local-scalar, and algebraic tortoise profiles (including
+   `beta=0`); Gaussian and zero-mean Gaussian-derivative waveforms; and a
+   spacetime Gaussian probe for approximating the retarded Green's function.
 
 
 

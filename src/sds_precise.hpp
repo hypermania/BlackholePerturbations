@@ -39,6 +39,13 @@
 #include <quadmath.h>
 
 
+template<typename Number>
+inline Number sds_grid_coordinate(const Number &x_min, const Number &h,
+                                  const long long int i) {
+  return x_min + (Number(i) - Number(1) / Number(2)) * h;
+}
+
+
 enum class SdSSourceProfile : long long {
   ArealPower = 0,
   HorizonSubtractedArealPower = 1,
@@ -106,6 +113,257 @@ struct SdSTranslatedSourceParam {
 };
 
 
+struct SdSSpacetimeGaussianSourceParam {
+  typedef boost::multiprecision::float128 Scalar;
+  Scalar amplitude = Scalar(1);
+  Scalar r_ast_center = Scalar(0);
+  Scalar t_center = Scalar(0);
+  Scalar sigma = Scalar("0.5");
+  Scalar cutoff_sigma = Scalar(12);
+};
+
+
+/*!
+  \brief Optional source for SdSMasterPDEPrecise.
+
+  Built-in sources precompute their spatial data during PDE construction and
+  fill a caller-owned workspace at each time. The spacetime Gaussian is
+
+    amplitude exp(-[(x-r_ast_center)^2+(t-t_center)^2]/sigma^2)
+      / (sqrt(2 pi) sigma).
+
+  A GenericSource obeying the same workspace-filling contract can be used for
+  arbitrary sources.
+*/
+struct SdSSource {
+  typedef boost::multiprecision::float128 Scalar;
+  typedef Eigen::Array<Scalar, -1, 1> Vector;
+  typedef std::function<void(const Scalar &, Vector &)> GenericSource;
+
+  enum class Kind : long long {
+    None = 0,
+    Generic = 1,
+    TranslatedGaussian = 2,
+    SpacetimeGaussian = 3
+  };
+
+  SdSSource() = default;
+
+  explicit SdSSource(GenericSource source)
+      : kind(Kind::Generic), generic_source(std::move(source)) {
+    if(!generic_source) {
+      throw std::invalid_argument("generic SdS source is empty");
+    }
+  }
+
+  explicit SdSSource(const SdSTranslatedSourceParam &source_param)
+      : kind(Kind::TranslatedGaussian), translated_param(source_param) {
+    validate(translated_param);
+  }
+
+  explicit SdSSource(const SdSSpacetimeGaussianSourceParam &source_param)
+      : kind(Kind::SpacetimeGaussian), spacetime_param(source_param) {
+    validate(spacetime_param);
+  }
+
+  explicit operator bool() const {
+    return kind != Kind::None;
+  }
+
+  void initialize(const Scalar &x_min_, const Scalar &h_,
+                  const long long int grid_size_, const Scalar &r_cosmological,
+                  const Vector &r, const Vector &rho_cosmological,
+                  const Vector &f) {
+    x_min = x_min_;
+    h = h_;
+    inv_h = Scalar(1) / h;
+    grid_size = grid_size_;
+
+    if(kind == Kind::TranslatedGaussian) {
+      initialize_translated(r_cosmological, r, rho_cosmological, f);
+    } else if(kind == Kind::SpacetimeGaussian) {
+      initialize_spacetime_gaussian();
+    }
+  }
+
+  void operator()(const Scalar &t, Vector &result) const {
+    switch(kind) {
+      case Kind::None:
+        result.setZero(grid_size);
+        return;
+      case Kind::Generic:
+        generic_source(t, result);
+        return;
+      case Kind::TranslatedGaussian:
+        evaluate_translated(t, result);
+        return;
+      case Kind::SpacetimeGaussian:
+        evaluate_spacetime_gaussian(t, result);
+        return;
+    }
+  }
+
+ private:
+  Kind kind = Kind::None;
+  GenericSource generic_source;
+  SdSTranslatedSourceParam translated_param;
+  SdSSpacetimeGaussianSourceParam spacetime_param;
+
+  long long int grid_size = 0;
+  Scalar x_min = 0;
+  Scalar h = 1;
+  Scalar inv_h = 1;
+  Scalar normalization = 0;
+  long long int spatial_begin = 1;
+  long long int spatial_end = 0;
+  Vector spatial_profile;
+
+  static void validate(const SdSTranslatedSourceParam &source_param) {
+    if(!(source_param.sigma > 0) || !(source_param.cutoff_sigma > 0)) {
+      throw std::invalid_argument("SdS source requires positive Gaussian widths");
+    }
+    if(source_param.profile == SdSSourceProfile::TortoisePower) {
+      if(!(source_param.L > 0) || !(source_param.X1 > source_param.X0)
+         || !(source_param.X0 + source_param.x0 > 0)) {
+        throw std::invalid_argument("invalid algebraic tortoise source profile");
+      }
+    }
+  }
+
+  static void validate(const SdSSpacetimeGaussianSourceParam &source_param) {
+    if(!(source_param.sigma > 0) || !(source_param.cutoff_sigma > 0)) {
+      throw std::invalid_argument(
+          "SdS spacetime Gaussian requires positive widths");
+    }
+  }
+
+  std::pair<long long int, long long int> grid_window(
+      const Scalar &center, const Scalar &radius) const {
+    const Scalar first_x = sds_grid_coordinate(x_min, h, 0);
+    const Scalar begin_real = (center - radius - first_x) * inv_h;
+    const Scalar end_real = (center + radius - first_x) * inv_h;
+    if(end_real < 0 || begin_real > Scalar(grid_size - 1)) return {1, 0};
+    const long long int begin = ceil(std::max(Scalar(0), begin_real))
+                                    .convert_to<long long int>();
+    const long long int end = floor(std::min(
+        Scalar(grid_size - 1), end_real)).convert_to<long long int>();
+    return {begin, end};
+  }
+
+  void initialize_translated(const Scalar &r_cosmological,
+                             const Vector &r,
+                             const Vector &rho_cosmological,
+                             const Vector &f) {
+    spatial_profile.resize(grid_size);
+    const Scalar beta = translated_param.beta;
+    const Scalar rc_power = pow(r_cosmological, -beta);
+
+#pragma omp parallel for schedule(static)
+    for(long long int i = 0; i < grid_size; ++i) {
+      const Scalar x = sds_grid_coordinate(x_min, h, i);
+      Scalar profile = 0;
+      switch(translated_param.profile) {
+        case SdSSourceProfile::ArealPower:
+          profile = pow(r[i], -beta);
+          break;
+        case SdSSourceProfile::HorizonSubtractedArealPower: {
+          const Scalar ratio = -rho_cosmological[i] / r_cosmological;
+          // The vendored Boost wrappers call these libquadmath functions but
+          // rely on an implicit __float128 conversion rejected by GCC 15.
+          const Scalar log_ratio(
+              Scalar::backend_type(log1pq(ratio.backend().value())));
+          const Scalar exponent = -beta * log_ratio;
+          const Scalar difference(
+              Scalar::backend_type(expm1q(exponent.backend().value())));
+          profile = rc_power * difference;
+          break;
+        }
+        case SdSSourceProfile::LocalScalar:
+          profile = f[i] * pow(r[i], -beta);
+          break;
+        case SdSSourceProfile::TortoisePower: {
+          Scalar cutoff = 0;
+          if(x >= translated_param.X1) {
+            cutoff = 1;
+          } else if(x > translated_param.X0) {
+            const Scalar z = (x - translated_param.X0)
+                             / (translated_param.X1 - translated_param.X0);
+            const Scalar left = exp(-Scalar(1) / z);
+            const Scalar right = exp(-Scalar(1) / (Scalar(1) - z));
+            cutoff = left / (left + right);
+          }
+          profile = cutoff == 0
+              ? Scalar(0)
+              : cutoff * pow(translated_param.L
+                                 / (x + translated_param.x0), beta);
+          break;
+        }
+      }
+      spatial_profile[i] = profile;
+    }
+
+    const Scalar pi = boost::math::constants::pi<Scalar>();
+    normalization = translated_param.amplitude
+                    / (sqrt(Scalar(2) * pi) * translated_param.sigma);
+  }
+
+  void initialize_spacetime_gaussian() {
+    spatial_profile = Vector::Zero(grid_size);
+    const Scalar radius = spacetime_param.cutoff_sigma * spacetime_param.sigma;
+    std::tie(spatial_begin, spatial_end) = grid_window(
+        spacetime_param.r_ast_center, radius);
+    const Scalar inv_sigma_sqr = Scalar(1)
+        / (spacetime_param.sigma * spacetime_param.sigma);
+
+#pragma omp parallel for schedule(static)
+    for(long long int i = spatial_begin; i <= spatial_end; ++i) {
+      const Scalar dx = sds_grid_coordinate(x_min, h, i)
+                        - spacetime_param.r_ast_center;
+      spatial_profile[i] = exp(-dx * dx * inv_sigma_sqr);
+    }
+
+    const Scalar pi = boost::math::constants::pi<Scalar>();
+    normalization = spacetime_param.amplitude
+                    / (sqrt(Scalar(2) * pi) * spacetime_param.sigma);
+  }
+
+  void evaluate_translated(const Scalar &t, Vector &result) const {
+    result.setZero(grid_size);
+    if(t < translated_param.onset_time) return;
+
+    const Scalar radius = translated_param.cutoff_sigma
+                          * translated_param.sigma;
+    const Scalar center_x = t - translated_param.u_center;
+    const auto [begin, end] = grid_window(center_x, radius);
+
+#pragma omp parallel for schedule(static)
+    for(long long int i = begin; i <= end; ++i) {
+      const Scalar x = sds_grid_coordinate(x_min, h, i);
+      const Scalar z = (t - x - translated_param.u_center)
+                       / translated_param.sigma;
+      Scalar waveform = normalization * exp(-z * z / Scalar(2));
+      if(translated_param.waveform == SdSWaveform::GaussianDerivative) {
+        waveform *= -z / translated_param.sigma;
+      }
+      result[i] = spatial_profile[i] * waveform;
+    }
+  }
+
+  void evaluate_spacetime_gaussian(const Scalar &t, Vector &result) const {
+    result.setZero(grid_size);
+    const Scalar dt = t - spacetime_param.t_center;
+    const Scalar z_t = dt / spacetime_param.sigma;
+    if(abs(z_t) > spacetime_param.cutoff_sigma) return;
+    const Scalar time_factor = normalization * exp(-z_t * z_t);
+
+#pragma omp parallel for schedule(static)
+    for(long long int i = spatial_begin; i <= spatial_end; ++i) {
+      result[i] = time_factor * spatial_profile[i];
+    }
+  }
+};
+
+
 struct SdSMasterPDEPrecise {
   typedef SdSMasterPDEPreciseParam Param;
   typedef boost::multiprecision::float128 Scalar;
@@ -129,15 +387,11 @@ struct SdSMasterPDEPrecise {
   Vector f;
   Vector V;
 
-  std::function<void(const Scalar &, Vector &)> Q;
-  mutable Vector Q_workspace;
+  SdSSource Q;
+  Vector Q_workspace;
 
-  bool has_translated_source = false;
-  SdSTranslatedSourceParam translated_source_param;
-  Vector translated_source_spatial;
-  Scalar waveform_prefactor = 0;
-
-  explicit SdSMasterPDEPrecise(const Param param_) : param(param_) {
+  explicit SdSMasterPDEPrecise(const Param param_, SdSSource source = {})
+      : param(param_), Q(std::move(source)) {
     validate_param();
 
     grid_size = param.N + 1;
@@ -149,7 +403,7 @@ struct SdSMasterPDEPrecise {
     rho_cosmological.resize(grid_size);
     f.resize(grid_size);
     V.resize(grid_size);
-    Q_workspace.resize(grid_size);
+    Q_workspace = Vector::Zero(grid_size);
 
     const GeometryHP geometry = make_geometry(
         HighPrecisionScalar(param.M), HighPrecisionScalar(param.Lambda));
@@ -215,13 +469,16 @@ struct SdSMasterPDEPrecise {
           "SdS tortoise-coordinate inversion failed at grid index "
           + std::to_string(first_failed_index));
     }
+
+    Q.initialize(param.r_min, h, grid_size, r_cosmological,
+                 r, rho_cosmological, f);
   }
 
 
   template<typename Number>
   static Number grid_coordinate(const Number &x_min, const Number &h,
                                 const long long int i) {
-    return x_min + (Number(i) - Number(1) / Number(2)) * h;
+    return sds_grid_coordinate(x_min, h, i);
   }
 
 
@@ -232,107 +489,6 @@ struct SdSMasterPDEPrecise {
 
   Scalar grid_space() const {
     return (param.r_max - param.r_min) / Scalar(param.N - 1);
-  }
-
-
-  void set_generic_source(
-      std::function<void(const Scalar &, Vector &)> source) {
-    Q = std::move(source);
-    has_translated_source = false;
-    translated_source_spatial.resize(0);
-  }
-
-
-  void clear_source() {
-    Q = {};
-    has_translated_source = false;
-    translated_source_spatial.resize(0);
-  }
-
-
-  void set_translated_gaussian_source(
-      const SdSTranslatedSourceParam &source_param) {
-    validate_source_param(source_param);
-    translated_source_param = source_param;
-    translated_source_spatial.resize(grid_size);
-
-    const Scalar beta = source_param.beta;
-    const Scalar rc_power = pow(r_cosmological, -beta);
-    const Scalar h = grid_space();
-
-#pragma omp parallel for schedule(static)
-    for(long long int i = 0; i < grid_size; ++i) {
-      const Scalar x = grid_coordinate(param.r_min, h, i);
-      Scalar profile = 0;
-      switch(source_param.profile) {
-        case SdSSourceProfile::ArealPower:
-          profile = pow(r[i], -beta);
-          break;
-        case SdSSourceProfile::HorizonSubtractedArealPower: {
-          const Scalar ratio = -rho_cosmological[i] / r_cosmological;
-          // The vendored Boost wrappers call these libquadmath functions but
-          // rely on an implicit __float128 conversion rejected by GCC 15.
-          const Scalar log_ratio(
-              Scalar::backend_type(log1pq(ratio.backend().value())));
-          const Scalar exponent = -beta * log_ratio;
-          const Scalar difference(
-              Scalar::backend_type(expm1q(exponent.backend().value())));
-          profile = rc_power * difference;
-          break;
-        }
-        case SdSSourceProfile::LocalScalar:
-          profile = f[i] * pow(r[i], -beta);
-          break;
-        case SdSSourceProfile::TortoisePower: {
-          Scalar cutoff = 0;
-          if(x >= source_param.X1) {
-            cutoff = 1;
-          } else if(x > source_param.X0) {
-            const Scalar z = (x - source_param.X0)
-                             / (source_param.X1 - source_param.X0);
-            const Scalar left = exp(-Scalar(1) / z);
-            const Scalar right = exp(-Scalar(1) / (Scalar(1) - z));
-            cutoff = left / (left + right);
-          }
-          profile = cutoff == 0
-              ? Scalar(0)
-              : cutoff
-                    * pow(source_param.L / (x + source_param.x0), beta);
-          break;
-        }
-      }
-      translated_source_spatial[i] = profile;
-    }
-
-    const Scalar pi = boost::math::constants::pi<Scalar>();
-    waveform_prefactor = source_param.amplitude
-                         / (sqrt(Scalar(2) * pi) * source_param.sigma);
-    Q = {};
-    has_translated_source = true;
-  }
-
-
-  Scalar translated_source_value(const long long int i,
-                                 const Scalar &t) const {
-    return translated_source_value(i, t, grid_space());
-  }
-
-
-  Scalar translated_source_value(const long long int i, const Scalar &t,
-                                 const Scalar &h) const {
-    if(!has_translated_source || t < translated_source_param.onset_time) {
-      return 0;
-    }
-    const Scalar x = grid_coordinate(param.r_min, h, i);
-    const Scalar z = (t - x - translated_source_param.u_center)
-                     / translated_source_param.sigma;
-    if(abs(z) > translated_source_param.cutoff_sigma) return 0;
-    Scalar waveform = waveform_prefactor * exp(-z * z / Scalar(2));
-    if(translated_source_param.waveform
-       == SdSWaveform::GaussianDerivative) {
-      waveform *= -z / translated_source_param.sigma;
-    }
-    return translated_source_spatial[i] * waveform;
   }
 
 
@@ -347,91 +503,37 @@ struct SdSMasterPDEPrecise {
     Scalar *__restrict__ dpi = derivative.data() + grid_size;
     const Scalar *__restrict__ potential = V.data();
 
-    const bool has_generic_source = !has_translated_source
-                                    && static_cast<bool>(Q);
-    if(has_generic_source) {
+    if(Q) {
       Q(t, Q_workspace);
       if(Q_workspace.size() != grid_size) {
-        throw std::invalid_argument("generic SdS source size does not match grid");
+        throw std::invalid_argument("SdS source size does not match grid");
       }
     }
-    const Scalar *__restrict__ generic_source = Q_workspace.data();
-
-    long long int source_begin = 1;
-    long long int source_end = 0;
-    const Scalar h = grid_space();
-    if(has_translated_source && t >= translated_source_param.onset_time) {
-      const Scalar radius = translated_source_param.cutoff_sigma
-                            * translated_source_param.sigma;
-      const Scalar center_x = t - translated_source_param.u_center;
-      const Scalar first_x = grid_coordinate(param.r_min, h, 0);
-      const Scalar begin_real = (center_x - radius - first_x) * inv_h;
-      const Scalar end_real = (center_x + radius - first_x) * inv_h;
-      if(!(end_real < 0 || begin_real > Scalar(grid_size - 1))) {
-        const Scalar clipped_begin = std::max(Scalar(0), begin_real);
-        const Scalar clipped_end = std::min(Scalar(grid_size - 1), end_real);
-        source_begin = ceil(clipped_begin).convert_to<long long int>();
-        source_end = floor(clipped_end).convert_to<long long int>();
-      }
-    }
-
-    const bool translated_active = source_begin <= source_end;
+    const Scalar *__restrict__ source = Q_workspace.data();
     const Scalar d2_factor = inv_h_sqr / Scalar(12);
     const Scalar near_factor = Scalar(16) * d2_factor;
     const Scalar far_factor = -d2_factor;
     const Scalar center_coefficient = -Scalar(30) * d2_factor;
     const Scalar one_twelfth_inv_h = inv_h / Scalar(12);
 
-    auto source_at = [&](const long long int i) -> Scalar {
-      if(translated_active && i >= source_begin && i <= source_end) {
-        return translated_source_value(i, t, h);
-      }
-      if(has_generic_source) return generic_source[i];
-      return Scalar(0);
-    };
-
-    if(!translated_active && !has_generic_source) {
 #pragma omp parallel for schedule(static)
-      for(long long int i = 2; i <= grid_size - 3; ++i) {
-        const Scalar near_sum = psi[i - 1] + psi[i + 1];
-        const Scalar far_sum = psi[i - 2] + psi[i + 2];
-        dpi[i] = near_factor * near_sum + far_factor * far_sum
-                 + (center_coefficient - potential[i]) * psi[i];
-        dpsi[i] = pi[i];
-      }
-    } else if(translated_active) {
-#pragma omp parallel for schedule(static)
-      for(long long int i = 2; i <= grid_size - 3; ++i) {
-        const Scalar near_sum = psi[i - 1] + psi[i + 1];
-        const Scalar far_sum = psi[i - 2] + psi[i + 2];
-        dpi[i] = near_factor * near_sum + far_factor * far_sum
-                 + (center_coefficient - potential[i]) * psi[i];
-        if(i >= source_begin && i <= source_end) {
-          dpi[i] += translated_source_value(i, t, h);
-        }
-        dpsi[i] = pi[i];
-      }
-    } else {
-#pragma omp parallel for schedule(static)
-      for(long long int i = 2; i <= grid_size - 3; ++i) {
-        const Scalar near_sum = psi[i - 1] + psi[i + 1];
-        const Scalar far_sum = psi[i - 2] + psi[i + 2];
-        dpi[i] = near_factor * near_sum + far_factor * far_sum
-                 + (center_coefficient - potential[i]) * psi[i]
-                 + generic_source[i];
-        dpsi[i] = pi[i];
-      }
+    for(long long int i = 2; i <= grid_size - 3; ++i) {
+      const Scalar near_sum = psi[i - 1] + psi[i + 1];
+      const Scalar far_sum = psi[i - 2] + psi[i + 2];
+      dpi[i] = near_factor * near_sum + far_factor * far_sum
+               + (center_coefficient - potential[i]) * psi[i] + source[i];
+      dpsi[i] = pi[i];
     }
 
     dpi[0] = (-Scalar(25) * pi[0] + Scalar(48) * pi[1]
               - Scalar(36) * pi[2] + Scalar(16) * pi[3]
               - Scalar(3) * pi[4]) * one_twelfth_inv_h
-             - potential[0] * psi[0] + source_at(0);
+             - potential[0] * psi[0] + source[0];
     dpsi[0] = pi[0];
 
     dpi[1] = (Scalar(11) * psi[0] - Scalar(20) * psi[1]
               + Scalar(6) * psi[2] + Scalar(4) * psi[3] - psi[4])
-             * d2_factor - potential[1] * psi[1] + source_at(1);
+             * d2_factor - potential[1] * psi[1] + source[1];
     dpsi[1] = pi[1];
 
     const long long int n2 = grid_size - 2;
@@ -439,7 +541,7 @@ struct SdSMasterPDEPrecise {
     dpi[n2] = (-psi[grid_size - 5] + Scalar(4) * psi[grid_size - 4]
                + Scalar(6) * psi[grid_size - 3] - Scalar(20) * psi[n2]
                + Scalar(11) * psi[n1]) * d2_factor
-              - potential[n2] * psi[n2] + source_at(n2);
+              - potential[n2] * psi[n2] + source[n2];
     dpsi[n2] = pi[n2];
 
     dpi[n1] = (-Scalar(3) * pi[grid_size - 5]
@@ -447,7 +549,7 @@ struct SdSMasterPDEPrecise {
                - Scalar(36) * pi[grid_size - 3]
                + Scalar(48) * pi[n2] - Scalar(25) * pi[n1])
               * one_twelfth_inv_h - potential[n1] * psi[n1]
-              + source_at(n1);
+              + source[n1];
     dpsi[n1] = pi[n1];
   }
 
@@ -499,23 +601,6 @@ struct SdSMasterPDEPrecise {
     if(!(param.delta_t > 0) || !(param.t_end >= param.t_start)
        || !(param.t_interval > 0)) {
       throw std::invalid_argument("invalid SdS time parameters");
-    }
-  }
-
-
-  static void validate_source_param(
-      const SdSTranslatedSourceParam &source_param) {
-    if(!(source_param.beta > 0)) {
-      throw std::invalid_argument("SdS source requires beta > 0");
-    }
-    if(!(source_param.sigma > 0) || !(source_param.cutoff_sigma > 0)) {
-      throw std::invalid_argument("SdS source requires positive Gaussian widths");
-    }
-    if(source_param.profile == SdSSourceProfile::TortoisePower) {
-      if(!(source_param.L > 0) || !(source_param.X1 > source_param.X0)
-         || !(source_param.X0 + source_param.x0 > 0)) {
-        throw std::invalid_argument("invalid algebraic tortoise source profile");
-      }
     }
   }
 

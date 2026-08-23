@@ -153,7 +153,19 @@ from `1e-8` through `1e-16`, verifying the selected coordinate convention.
 
 ## Sources
 
-The optimized translated source has the form
+`SdSSource` owns source validation, spatial-profile preprocessing, numerical
+cutoffs, and evaluation. A source is passed to the PDE constructor:
+
+```cpp
+SdSTranslatedSourceParam source_param;
+SdSMasterPDEPrecise equation(param, SdSSource(source_param));
+```
+
+An empty `SdSSource` is used by the default homogeneous constructor. A custom
+callback can also be wrapped in `SdSSource`, so the PDE treats built-in and
+user-defined sources through the same callable interface.
+
+The translated source has the form
 
 ```text
 S(t,x) = Theta(t-t_on) F(t-x) a(x).
@@ -173,7 +185,19 @@ delegate to these same functions but do not compile with GCC 15 because their
 that compatibility defect without maintaining local series implementations.
 The tortoise profile uses a smooth compact transition between `X0` and `X1`.
 Waveforms can be a normalized Gaussian or its derivative; the latter has zero
-retarded-time mean.
+retarded-time mean. `beta` may be zero or negative. In particular, `beta=0`
+gives profiles `1`, `0`, `f`, and `chi_+`, respectively.
+
+`SdSSpacetimeGaussianSourceParam` provides the localized Green-function probe
+
+```text
+S(t,x) = A exp(-[(x-x0)^2+(t-t0)^2]/sigma^2)
+           / [sqrt(2 pi) sigma].
+```
+
+The spatial Gaussian is precomputed, while its scalar time factor is evaluated
+at each Runge-Kutta stage. Values beyond the configurable `cutoff_sigma` are
+set to zero.
 
 The persistent geometry vectors are now only `r`, `rho_cosmological`, `f`, and
 the physical potential `V`. The uniform tortoise grid is evaluated through one
@@ -181,11 +205,17 @@ shared `grid_coordinate` helper. The evolution uses `V` directly and forms the
 constant fourth-order center contribution inside `operator()`; it does not
 retain a second transformed-potential vector.
 
-At each Runge-Kutta stage the solver computes the finite grid interval inside
-the configured Gaussian cutoff. Only this interval evaluates binary128
-exponentials, and source values are fused into the stencil. Homogeneous,
-translated-source, and generic-source kernels are selected once per RHS call so
-there is no source branch at every homogeneous grid point.
+At each Runge-Kutta stage `SdSSource` fills one reusable workspace. It computes
+only the finite grid interval inside the configured Gaussian cutoff. The PDE
+operator contains no source-specific formulas or window logic: it calls `Q`
+when present, then uses one unified assignment
+
+```text
+dPi = spatial_stencil - V psi + Q_workspace
+```
+
+for the interior and all four boundary points. The homogeneous case uses the
+same path with a workspace initialized once to zero.
 
 ## Output and entry point
 
@@ -212,7 +242,8 @@ matrix covers invalid parameters, analytic and independently root-found cubic
 roots, small cosmological constant, an extreme `Lambda=1e-100` geometry, a
 near-Nariai case, the Schwarzschild limit, ordered horizons, factorized
 coefficients, the 2000-decimal reference, constructor multipoles, all source
-profiles, source turn-on, the zero-mean waveform, independent
+profiles including `beta=0`, source turn-on, the zero-mean waveform, the
+spacetime Gaussian formula, independent
 original-formula boundary and interior stencils, one/two/six-thread
 reproducibility, one- versus six-thread geometry construction, and 25 complete
 Dopri5 steps.
@@ -224,10 +255,10 @@ correctness builds.
 
 `make check-sds-precise-performance` measures geometry initialization,
 homogeneous and sourced RHS throughput, complete Dopri5 steps, and paired
-minimal-kernel ceilings on the 50,001-point grid. The optimized homogeneous and
-sourced kernels both meet the 90% paired-ceiling gate. Performance samples can
-vary on the shared KVM host, so the benchmark alternates production and ceiling
-measurements and reports their medians.
+minimal-kernel ceilings on the 50,001-point grid. The unified kernel meets the
+90% paired-ceiling gate with both a zero workspace and a translated source.
+Performance samples can vary on the shared KVM host, so the benchmark alternates
+production and ceiling measurements and reports their medians.
 
 The inversion variants were measured with the same 50,001-point, six-thread
 configuration on this VPS:
