@@ -2,7 +2,7 @@
 
 ## 2026-08-24: Complete self-contained Boost 1.84 dependency
 
-Commits: `ba03321`, `f1095fc`
+Commits: `ba03321`, `f1095fc`, `9af52e6`
 
 ### Problems encountered
 
@@ -16,6 +16,8 @@ Commits: `ba03321`, `f1095fc`
 - The first Ubuntu 22.04 CI run used its default GCC 11, which rejects an
   existing template specialization in `cubic_scalar.hpp`; the documented
   project compiler is GCC 12.2 or newer.
+- Setting `HOST_COMPILER=g++-12` selected the compiler for explicit test and
+  CUDA rules but not Make's built-in C++ compilation rules, which use `CXX`.
 
 ### Solutions
 
@@ -29,7 +31,8 @@ Commits: `ba03321`, `f1095fc`
 - Added a CPU-build CI workflow and confirmed forced CPU, normal, production,
   and sanitizer builds with no numerical regression.
 - Made CI install and select GCC 12 explicitly instead of depending on the
-  runner's older default compiler.
+  runner's older default compiler. The application build sets both
+  `HOST_COMPILER` and `CXX` so explicit and built-in rules agree.
 
 ### How to avoid these problems
 
