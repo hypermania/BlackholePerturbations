@@ -88,7 +88,6 @@ CXXFLAGS += $(foreach includedir,$(program_INCLUDE_DIRS),-I$(includedir))
 CXXFLAGS += -std=c++20 -Wall -DEIGEN_DONT_PARALLELIZE -DEIGEN_NO_CUDA -ftemplate-depth=20000
 #-fext-numeric-literals  	#-DEIGEN_HAS_CONSTEXPR=1 #-DEIGEN_NO_DEBUG
 CXXFLAGS += -march=alderlake -pthread -fopenmp
-#CXXFLAGS += -march=native -pthread
 CXXFLAGS += -O3 -ffast-math
 #CXXFLAGS += -g -fno-omit-frame-pointer -fext-numeric-literals
 CXXFLAGS += -DNDEBUG
@@ -107,7 +106,8 @@ LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 .PHONY: all clean distclean benchmark-precise benchmark-sds-precise \
 	check-precise-performance check-precise-correctness \
 	check-precise-sanitizers check-sds-precise-performance \
-	check-sds-precise-correctness check-sds-precise-sanitizers
+	check-sds-precise-correctness check-sds-precise-sanitizers \
+	check-sds-areal-analysis
 
 all: $(program_NAME)
 
@@ -117,19 +117,20 @@ benchmark-sds-precise: test/benchmark_sds_precise
 
 check-precise-performance: benchmark-precise
 	OMP_PROC_BIND=close OMP_PLACES=cores OMP_WAIT_POLICY=active \
-		./test/benchmark_teukolsky_precise 50000 60 6
+		./test/benchmark_teukolsky_precise 50000 300 6
 
 check-sds-precise-performance: benchmark-sds-precise
 	OMP_PROC_BIND=close OMP_PLACES=cores OMP_WAIT_POLICY=active \
-		./test/benchmark_sds_precise 50000 180 6
+		./test/benchmark_sds_precise 50000 600 6
 
-test/benchmark_teukolsky_precise: test/benchmark_teukolsky_precise.cpp src/teukolsky_precise.hpp
+test/benchmark_teukolsky_precise: test/benchmark_teukolsky_precise.cpp \
+		src/teukolsky_precise.hpp src/odeint_eigen/eigen_operations.hpp
 	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \
 		-fopenmp $< -lquadmath -o $@
 
 test/benchmark_sds_precise: test/benchmark_sds_precise.cpp src/sds_precise.hpp \
 		src/odeint_eigen/eigen_operations.hpp
-	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -DNDEBUG -march=native \
+	$(HOST_COMPILER) -Iexternal -Isrc -std=c++20 -O3 -ffast-math -DNDEBUG -march=alderlake \
 		-fopenmp $< -lquadmath -o $@
 
 test/test_teukolsky_precise_correctness: test/test_teukolsky_precise_correctness.cpp \
@@ -196,6 +197,9 @@ check-sds-precise-sanitizers:
 		-o test/test_sds_precise_correctness_san
 	OMP_NUM_THREADS=2 OMP_PROC_BIND=close OMP_PLACES=cores \
 		./test/test_sds_precise_correctness_san
+
+check-sds-areal-analysis:
+	python3 test/test_analyze_sds_areal_scan.py
 
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)

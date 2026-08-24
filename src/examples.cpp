@@ -21,8 +21,14 @@
 
 #include "boost/type_index.hpp"
 
+#include <array>
+#include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
+#include <stdexcept>
+#include <omp.h>
 
 
 /*! 
@@ -635,4 +641,222 @@ void run_sds_precise_eqn(void) {
   });
   fixed_observer.save();
   snapshot_observer.save();
+}
+
+
+namespace {
+
+using SdSScalar = SdSMasterPDEPrecise::Scalar;
+
+struct SdSScanQ {
+  SdSScalar value;
+  const char *directory_code;
+};
+
+
+SdSScanQ parse_sds_scan_q(const std::string &q_text) {
+  const SdSScalar q(q_text);
+  if(q == SdSScalar("0.1")) return {q, "01"};
+  if(q == SdSScalar("0.2")) return {q, "02"};
+  if(q == SdSScalar("0.4")) return {q, "04"};
+  if(q == SdSScalar("0.8")) return {q, "08"};
+  throw std::invalid_argument("Q must be one of 0.1, 0.2, 0.4, or 0.8");
+}
+
+
+long long int nearest_sds_grid_index(const SdSMasterPDEPrecise &equation,
+                                     const double requested_x) {
+  const SdSScalar continuous_index =
+      (SdSScalar(requested_x) - equation.param.r_min) * equation.inv_h
+      + SdSScalar("0.5");
+  const long long int index = static_cast<long long int>(
+      std::llround(continuous_index.convert_to<double>()));
+  return std::clamp(index, 0LL, equation.grid_size - 1);
+}
+
+
+} // namespace
+
+
+/*!
+  \brief Run one member of the sourced SdS areal-radius scan.
+
+  Here q = 9 Lambda M^2. The scan fixes M = 0.5 and uses the
+  normalized nonzero-mean Gaussian source
+
+    F(u) = A exp[-(u-u0)^2/(2 sigma^2)] / (sqrt(2 pi) sigma),  A = 1,
+
+  multiplied by r^{-beta}. Every raw and derived artifact for one parameter
+  set is stored in one output directory.
+*/
+void run_sds_areal_scan(const std::string &q_text, const long long int s,
+                        const long long int l, const long long int beta) {
+  using namespace boost::numeric::odeint;
+
+  omp_set_dynamic(0);
+
+  using Equation = SdSMasterPDEPrecise;
+  using Param = SdSMasterPDEPreciseParam;
+  using Scalar = Equation::Scalar;
+  using State = Equation::State;
+
+  if(s < 0 || s > 2) {
+    throw std::invalid_argument("S must be one of 0, 1, or 2");
+  }
+  if(l < 0 || l > 3) {
+    throw std::invalid_argument("L must be one of 0, 1, 2, or 3");
+  }
+  if(l < s) throw std::invalid_argument("L must satisfy L >= S");
+  if(beta < 0 || beta > 2) {
+    throw std::invalid_argument("BETA must be one of 0, 1, or 2");
+  }
+  const SdSScanQ q = parse_sds_scan_q(q_text);
+
+  const Scalar M("0.5");
+  const Scalar Lambda = q.value / (Scalar(9) * M * M);
+  const Scalar x_min(-500);
+  const Scalar x_max(1000);
+  const Scalar nominal_dx("0.03");
+  const long long int N = static_cast<long long int>(
+      ((x_max - x_min) / nominal_dx).convert_to<long long int>());
+  const Scalar t_start(0);
+  const Scalar t_end(1000);
+  const Scalar delta_t("0.01");
+
+  std::ostringstream directory;
+  directory << "output/sds_areal_scan/q_" << q.directory_code
+            << "_l_" << l << "_beta_" << beta << "/";
+  const std::string dir = directory.str();
+  prepare_directory_for_output(dir);
+
+  Param param;
+  param.s = s;
+  param.l = l;
+  param.M = M;
+  param.Lambda = Lambda;
+  param.r_min = x_min;
+  param.r_max = x_max;
+  param.N = N;
+  param.t_start = t_start;
+  param.t_end = t_end;
+  param.t_interval = delta_t;
+  param.delta_t = delta_t;
+  save_param_for_Mathematica(param, dir);
+
+  SdSTranslatedSourceParam source;
+  source.profile = SdSSourceProfile::ArealPower;
+  source.waveform = SdSWaveform::Gaussian;
+  source.beta = Scalar(beta);
+  source.amplitude = 1;
+  source.u_center = -10;
+  source.sigma = Scalar("0.5");
+  source.onset_time = t_start;
+  source.cutoff_sigma = 12;
+  Equation equation(param, SdSSource(source));
+
+  constexpr double requested_observer = 50;
+  const long long int observer_index = nearest_sds_grid_index(
+      equation, requested_observer);
+  const std::vector<long long int> observed_components = {
+      observer_index, observer_index + equation.grid_size};
+
+  auto fixed_observer = FixedPositionObserver(dir, observed_components);
+  const std::vector<double> snapshot_times = {
+      0, 10, 20, 30, 40, 50, 75, 100, 125, 150,
+      200, 250, 300, 350, 400, 450, 500, 550, 600,
+      650, 700, 750, 800, 850, 900, 950, 1000
+  };
+  auto snapshot_observer = ApproximateTimeObserver(dir, snapshot_times);
+  auto observer = ObserverPack(fixed_observer, snapshot_observer);
+
+  Eigen::ArrayXd x_grid(equation.grid_size);
+  for(long long int i = 0; i < equation.grid_size; ++i) {
+    x_grid[i] = equation.grid_coordinate(i).convert_to<double>();
+  }
+  const Eigen::ArrayXd r_grid = equation.r.cast<double>();
+  const Eigen::ArrayXd f_grid = equation.f.cast<double>();
+  const Eigen::ArrayXd potential_grid = equation.V.cast<double>();
+  write_to_file(x_grid, dir + "x_grid.dat");
+  write_to_file(r_grid, dir + "r_grid.dat");
+  write_to_file(f_grid, dir + "f_grid.dat");
+  write_to_file(potential_grid, dir + "potential_grid.dat");
+  write_to_file(snapshot_times, dir + "snapshot_times_requested.dat");
+
+  const Scalar effective_u_min = source.u_center
+                                 - source.cutoff_sigma * source.sigma;
+  const Scalar finite_domain_limit = Scalar(2) * x_max
+                                     - Scalar(requested_observer)
+                                     + effective_u_min;
+  {
+    std::ofstream metadata(dir + "metadata.txt");
+    metadata << std::setprecision(36)
+             << "run_name q_" << q.directory_code << "_l_" << l
+             << "_beta_" << beta << '\n'
+             << "q_9LambdaM2 " << q.value << '\n'
+             << "s " << s << '\n'
+             << "l " << l << '\n'
+             << "beta " << beta << '\n'
+             << "M " << M << '\n'
+             << "Lambda " << Lambda << '\n'
+             << "x_min " << x_min << '\n'
+             << "x_max " << x_max << '\n'
+             << "N " << N << '\n'
+             << "grid_size " << equation.grid_size << '\n'
+             << "dx " << equation.grid_space() << '\n'
+             << "t_start " << t_start << '\n'
+             << "t_end " << t_end << '\n'
+             << "delta_t " << delta_t << '\n'
+             << "openmp_threads " << omp_get_max_threads() << '\n'
+             << "source_profile "
+             << sds_source_profile_name(source.profile) << '\n'
+             << "source_waveform " << sds_waveform_name(source.waveform)
+             << '\n'
+             << "source_amplitude_integral_A " << source.amplitude << '\n'
+             << "source_u_center " << source.u_center << '\n'
+             << "source_sigma " << source.sigma << '\n'
+             << "source_onset_time " << source.onset_time << '\n'
+             << "source_cutoff_sigma " << source.cutoff_sigma << '\n'
+             << "r_black_hole " << equation.r_black_hole << '\n'
+             << "r_cosmological " << equation.r_cosmological << '\n'
+             << "r_negative " << equation.r_negative << '\n'
+             << "kappa_black_hole " << equation.kappa_black_hole << '\n'
+             << "kappa_cosmological " << equation.kappa_cosmological << '\n'
+             << "tortoise_convention x(3M)=3M+2M*log(1/2)\n"
+             << "finite_domain_fit_limit " << finite_domain_limit << '\n'
+             << "time_series_layout row_major_[psi_x50,Pi_x50]\n"
+             << "observer_requested_x " << requested_observer << '\n'
+             << "observer_index " << observer_index << '\n'
+             << "observer_actual_x "
+             << equation.grid_coordinate(observer_index) << '\n';
+  }
+
+  State state = State::Zero(2 * equation.grid_size);
+  auto stepper = runge_kutta_dopri5<State, Scalar, State, Scalar>();
+  const auto wall_start = std::chrono::steady_clock::now();
+  const int steps = integrate_const(
+      stepper, std::ref(equation), state, t_start, t_end, delta_t,
+      std::ref(observer));
+  const double wall_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - wall_start).count();
+
+  fixed_observer.save();
+  snapshot_observer.save();
+  const Eigen::ArrayXd final_state = state.cast<double>();
+  write_to_file(final_state, dir + "final_state.dat");
+  {
+    std::ofstream summary(dir + "run_summary.txt");
+    summary << std::setprecision(17)
+            << "steps " << steps << '\n'
+            << "time_samples " << fixed_observer.t_list.size() << '\n'
+            << "snapshots_saved " << snapshot_observer.t_list.size() << '\n'
+            << "wall_seconds " << wall_seconds << '\n';
+  }
+  {
+    std::ofstream complete(dir + "COMPLETE");
+    complete << "Simulation output complete\n";
+  }
+
+  std::cout << "SdS areal scan run complete: " << dir << '\n'
+            << "steps = " << steps << ", wall time = " << wall_seconds
+            << " s\n";
 }

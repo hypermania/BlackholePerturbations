@@ -1,29 +1,75 @@
 /*
   Modifications by Siyang Ling.
   Adapted so that Eigen can work with runge_kutta_dopri5 and runge_kutta_fehlberg78.
-  The generic Runge Kutta algorithms implemented by odeint uses Boost.fusion, which introduces extra memory allocation/free. The "scale_sum*" operations are reimplemented here using native Eigen to avoid this overhead.
+  The generic Runge Kutta algorithms implemented by odeint uses Boost.fusion, which introduces extra memory allocation/free. The "scale_sum*" operations are reimplemented here using native Eigen to avoid this overhead. Exact unit coefficients are handled without a redundant per-element multiplication.
 */
 
 #ifndef EIGEN_OPERATIONS_HPP
 #define EIGEN_OPERATIONS_HPP
 
+#include <type_traits>
+
 #include <Eigen/Dense>
+#include <boost/multiprecision/float128.hpp>
+
+#if defined(__GNUC__)
+// GCC lowers software binary128 arithmetic to these libgcc routines.  The
+// explicit calls below preserve the former -ffast-math addition tree while
+// removing only multiplication by the exact unit coefficient.
+extern "C" float128_type __addtf3(float128_type, float128_type);
+extern "C" float128_type __multf3(float128_type, float128_type);
+#endif
 
 namespace boost {
   namespace numeric {
     namespace odeint {
+
+      namespace detail {
+
+#if defined(__GNUC__)
+      __attribute__((always_inline))
+#endif
+      inline ::boost::multiprecision::float128 unit_scale_sum6(
+          const ::boost::multiprecision::float128 &v1,
+          const ::boost::multiprecision::float128 &v2,
+          const ::boost::multiprecision::float128 &v3,
+          const ::boost::multiprecision::float128 &v4,
+          const ::boost::multiprecision::float128 &v5,
+          const ::boost::multiprecision::float128 &v6,
+          const ::boost::multiprecision::float128 &alpha2,
+          const ::boost::multiprecision::float128 &alpha3,
+          const ::boost::multiprecision::float128 &alpha4,
+          const ::boost::multiprecision::float128 &alpha5,
+          const ::boost::multiprecision::float128 &alpha6) {
+#if defined(__FAST_MATH__) && defined(__GNUC__)
+        using Raw = ::float128_type;
+        const Raw sum34 = ::__addtf3(
+            ::__multf3(alpha3.backend().value(), v3.backend().value()),
+            ::__multf3(alpha4.backend().value(), v4.backend().value()));
+        const Raw left = ::__addtf3(v1.backend().value(), sum34);
+        const Raw sum56 = ::__addtf3(
+            ::__multf3(alpha5.backend().value(), v5.backend().value()),
+            ::__multf3(alpha6.backend().value(), v6.backend().value()));
+        const Raw right = ::__addtf3(
+            ::__multf3(alpha2.backend().value(), v2.backend().value()), sum56);
+        return ::boost::multiprecision::float128(::__addtf3(left, right));
+#else
+        return v1 + alpha2 * v2 + alpha3 * v3 + alpha4 * v4
+               + alpha5 * v5 + alpha6 * v6;
+#endif
+      }
+
+      }  // namespace detail
       
-      template<typename D>
-      struct eigen_operations {
-	// typedef Eigen::internal::traits<D>::Scalar Scalar;
-	// typedef Eigen::internal::traits<D>::XprKind XprKind;
-	// Eigen::internal::traits<D>::RowsAtCompileTime;
-	// Eigen::internal::traits<D>::ColsAtCompileTime;
-      };
+      template<typename D, bool OptimizeUnitCoefficient = true>
+      struct eigen_operations {};
       
-      template<template<typename,int,int> typename EigenObj, typename Scalar, int RowsAtCompileTime, int ColsAtCompileTime>
-      struct eigen_operations<EigenObj<Scalar, RowsAtCompileTime, ColsAtCompileTime>> {
+      template<template<typename,int,int> typename EigenObj, typename Scalar, int RowsAtCompileTime, int ColsAtCompileTime, bool OptimizeUnitCoefficient>
+      struct eigen_operations<EigenObj<Scalar, RowsAtCompileTime, ColsAtCompileTime>, OptimizeUnitCoefficient> {
 	typedef EigenObj<Scalar, RowsAtCompileTime, ColsAtCompileTime> State;
+	static constexpr bool EnableUnitOptimization =
+	    OptimizeUnitCoefficient
+	    && std::is_same_v<Scalar, ::boost::multiprecision::float128>;
 	
 	template<class Fac = Scalar>
 	struct scale_sum1
@@ -35,6 +81,11 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i) v0[i] = v1[i];
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i) v0[i] = m_alpha1 * v1[i];
 	  }
@@ -51,6 +102,12 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i)
+	        v0[i] = v1[i] + m_alpha2 * v2[i];
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i)
 	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i];
@@ -70,6 +127,12 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i)
+	        v0[i] = v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i];
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i)
 	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i];
@@ -91,6 +154,13 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i)
+	        v0[i] = v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
+	                + m_alpha4 * v4[i];
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i)
 	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i] + m_alpha4 * v4[i];
@@ -113,6 +183,13 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4, const State &v5) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i)
+	        v0[i] = v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
+	                + m_alpha4 * v4[i] + m_alpha5 * v5[i];
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i)
 	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]
@@ -137,6 +214,14 @@ namespace boost {
 
 	  void operator()(State &v0, const State &v1, const State &v2, const State &v3, const State &v4, const State &v5, const State &v6) const
 	  {
+	    if constexpr(EnableUnitOptimization) if(m_alpha1 == Fac(1)) {
+#pragma omp parallel for schedule(static) if(v0.size() >= 4096)
+	      for(Eigen::Index i = 0; i < v0.size(); ++i)
+	        v0[i] = detail::unit_scale_sum6(
+	            v1[i], v2[i], v3[i], v4[i], v5[i], v6[i],
+	            m_alpha2, m_alpha3, m_alpha4, m_alpha5, m_alpha6);
+	      return;
+	    }
 #pragma omp parallel for schedule(static) if(v0.size() >= 4096)
 	    for(Eigen::Index i = 0; i < v0.size(); ++i)
 	      v0[i] = m_alpha1 * v1[i] + m_alpha2 * v2[i] + m_alpha3 * v3[i]

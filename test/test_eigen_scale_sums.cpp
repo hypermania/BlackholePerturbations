@@ -45,9 +45,19 @@ bool values_equal(const State &actual, const State &expected) {
 }
 
 template <class State>
+bool values_exactly_equal(const State &actual, const State &expected) {
+  if (actual.size() != expected.size()) return false;
+  for (Eigen::Index i = 0; i < actual.size(); ++i) {
+    if (actual[i] != expected[i]) return false;
+  }
+  return true;
+}
+
+template <class State>
 void check_scale_sums(Eigen::Index size, int threads, const std::string &label) {
   using Scalar = typename State::Scalar;
   using Operations = boost::numeric::odeint::eigen_operations<State>;
+  using LegacyOperations = boost::numeric::odeint::eigen_operations<State, false>;
   omp_set_num_threads(threads);
 
   std::array<State, 7> input;
@@ -137,6 +147,69 @@ void check_scale_sums(Eigen::Index size, int threads, const std::string &label) 
     operation(aliased, aliased, input[1], input[2], input[3], input[4], input[5],
               input[6]);
     require(values_equal(aliased, expected), label + " scale_sum7 aliased output");
+  }
+
+
+  State legacy(size);
+  const Scalar one = 1;
+  {
+    typename Operations::template scale_sum1<> optimized(one);
+    typename LegacyOperations::template scale_sum1<> reference(one);
+    optimized(actual, input[0]);
+    reference(legacy, input[0]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum1 exact");
+  }
+  {
+    typename Operations::template scale_sum2<> optimized(one, alpha[1]);
+    typename LegacyOperations::template scale_sum2<> reference(one, alpha[1]);
+    optimized(actual, input[0], input[1]);
+    reference(legacy, input[0], input[1]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum2 exact");
+  }
+  {
+    typename Operations::template scale_sum3<> optimized(one, alpha[1], alpha[2]);
+    typename LegacyOperations::template scale_sum3<> reference(one, alpha[1], alpha[2]);
+    optimized(actual, input[0], input[1], input[2]);
+    reference(legacy, input[0], input[1], input[2]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum3 exact");
+  }
+  {
+    typename Operations::template scale_sum4<> optimized(
+        one, alpha[1], alpha[2], alpha[3]);
+    typename LegacyOperations::template scale_sum4<> reference(
+        one, alpha[1], alpha[2], alpha[3]);
+    optimized(actual, input[0], input[1], input[2], input[3]);
+    reference(legacy, input[0], input[1], input[2], input[3]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum4 exact");
+  }
+  {
+    typename Operations::template scale_sum5<> optimized(
+        one, alpha[1], alpha[2], alpha[3], alpha[4]);
+    typename LegacyOperations::template scale_sum5<> reference(
+        one, alpha[1], alpha[2], alpha[3], alpha[4]);
+    optimized(actual, input[0], input[1], input[2], input[3], input[4]);
+    reference(legacy, input[0], input[1], input[2], input[3], input[4]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum5 exact");
+  }
+  {
+    typename Operations::template scale_sum6<> optimized(
+        one, alpha[1], alpha[2], alpha[3], alpha[4], alpha[5]);
+    typename LegacyOperations::template scale_sum6<> reference(
+        one, alpha[1], alpha[2], alpha[3], alpha[4], alpha[5]);
+    optimized(actual, input[0], input[1], input[2], input[3], input[4], input[5]);
+    reference(legacy, input[0], input[1], input[2], input[3], input[4], input[5]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum6 exact");
+  }
+  {
+    typename Operations::template scale_sum7<> optimized(
+        one, alpha[1], alpha[2], alpha[3], alpha[4], alpha[5], alpha[6]);
+    typename LegacyOperations::template scale_sum7<> reference(
+        one, alpha[1], alpha[2], alpha[3], alpha[4], alpha[5], alpha[6]);
+    optimized(actual, input[0], input[1], input[2], input[3], input[4], input[5],
+              input[6]);
+    reference(legacy, input[0], input[1], input[2], input[3], input[4], input[5],
+              input[6]);
+    require(values_exactly_equal(actual, legacy), label + " unit scale_sum7 exact");
   }
 }
 
