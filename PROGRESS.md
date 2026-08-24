@@ -1,5 +1,46 @@
 # Progress log
 
+## 2026-08-24: SdS scan interface and fit documentation cleanup
+
+Commit: `ece9bcf`
+
+### Problems encountered
+
+- The areal-scan runner hardcoded `s=0`, saved three observer locations when
+  only `x=50` was required, and exposed two one-use conversion and snapshot
+  helpers outside the runner.
+- The completed pilot uses the old six-column observer layout, while future
+  runs use the simpler two-column layout. Removing the old layout outright
+  would make the saved pilot difficult to reproduce.
+- The large Jacobian column for the fitted constant `a` could be mistaken for
+  evidence of a resolved nonzero exponent. For this model, that column is
+  identically one and its norm is fixed mainly by the number of samples.
+- Numerical reports accumulated in the repository root and obscured the
+  source, script, and test layout.
+
+### Solutions
+
+- Added `s` to the scan API and CLI, reduced fixed-position output to
+  `(psi_x50, Pi_x50)`, and moved the snapshot schedule and binary128-to-double
+  conversions into `run_sds_areal_scan`.
+- Updated the analysis to consume the new two-column layout while selecting
+  the `x=50` columns from the already completed six-column pilot. Added tests
+  for both layouts.
+- Documented the full pilot Jacobian, column norms, singular values, projected
+  `a` sensitivity, and window-stability limitation. The supported conclusion
+  remains `a=0`, not an observer-dependent value near `1e-20`.
+- Moved the committed numerical reports into `doc/` and updated repository and
+  project references.
+
+### How to avoid these problems
+
+- Keep runner output schemas as small and explicit as the planned analysis
+  requires, and test any intentional compatibility path for existing data.
+- Assess a nonlinear fit with the complete Jacobian, singular values, nuisance
+  directions, and window stability. A large norm for one column is not an
+  identifiability test.
+- Add new numerical reports under `doc/` rather than the repository root.
+
 ## 2026-08-23: Precise SdS evolution optimization
 
 Commit: `c830b75`
