@@ -2,7 +2,7 @@
 
 ## 2026-08-24: Complete self-contained Boost 1.84 dependency
 
-Commit: `ba03321`
+Commits: `ba03321`, `f1095fc`
 
 ### Problems encountered
 
@@ -13,6 +13,9 @@ Commit: `ba03321`
 - Builds on this VPS succeeded accidentally by loading that missing header
   from system Boost 1.74, mixing two Boost releases. A machine without the
   system header failed while compiling `examples.cpp` and `main.cpp`.
+- The first Ubuntu 22.04 CI run used its default GCC 11, which rejects an
+  existing template specialization in `cubic_scalar.hpp`; the documented
+  project compiler is GCC 12.2 or newer.
 
 ### Solutions
 
@@ -25,6 +28,8 @@ Commit: `ba03321`
   all under `external/boost`.
 - Added a CPU-build CI workflow and confirmed forced CPU, normal, production,
   and sanitizer builds with no numerical regression.
+- Made CI install and select GCC 12 explicitly instead of depending on the
+  runner's older default compiler.
 
 ### How to avoid these problems
 
