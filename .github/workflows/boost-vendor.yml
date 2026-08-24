@@ -16,4 +16,4 @@ jobs:
       - name: Verify complete Boost tree and include closure
         run: make HOST_COMPILER=g++-12 check-boost-vendor
       - name: Build the CPU application
-        run: make -j2 HOST_COMPILER=g++-12 disable-cuda=true
+        run: make -j2 HOST_COMPILER=g++-12 CXX=g++-12 disable-cuda=true
