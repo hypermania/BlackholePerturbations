@@ -62,12 +62,7 @@ namespace boost {
       }  // namespace detail
       
       template<typename D, bool OptimizeUnitCoefficient = true>
-      struct eigen_operations {
-	// typedef Eigen::internal::traits<D>::Scalar Scalar;
-	// typedef Eigen::internal::traits<D>::XprKind XprKind;
-	// Eigen::internal::traits<D>::RowsAtCompileTime;
-	// Eigen::internal::traits<D>::ColsAtCompileTime;
-      };
+      struct eigen_operations {};
       
       template<template<typename,int,int> typename EigenObj, typename Scalar, int RowsAtCompileTime, int ColsAtCompileTime, bool OptimizeUnitCoefficient>
       struct eigen_operations<EigenObj<Scalar, RowsAtCompileTime, ColsAtCompileTime>, OptimizeUnitCoefficient> {

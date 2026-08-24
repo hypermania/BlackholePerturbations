@@ -16,15 +16,9 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 
 
-OBSERVER_LABELS = ("x=0", "x=50", "x=100")
-TIME_SERIES_COLUMNS = (
-    "psi_x0",
-    "psi_x50",
-    "psi_x100",
-    "Pi_x0",
-    "Pi_x50",
-    "Pi_x100",
-)
+OBSERVER_LABELS = ("x=50",)
+TIME_SERIES_COLUMNS = ("psi_x50", "Pi_x50")
+LEGACY_TIME_SERIES_COLUMN_COUNT = 6
 
 
 @dataclass
@@ -83,13 +77,22 @@ def load_run(run_directory: Path) -> tuple[
     metadata = parse_metadata(run_directory / "metadata.txt")
     times = np.fromfile(run_directory / "t_list.dat", dtype=np.float64)
     values = np.fromfile(run_directory / "psi_list.dat", dtype=np.float64)
-    if times.size == 0 or values.size != times.size * len(TIME_SERIES_COLUMNS):
+    if times.size == 0:
+        raise ValueError("time series is empty")
+    if values.size == times.size * len(TIME_SERIES_COLUMNS):
+        values = values.reshape(times.size, len(TIME_SERIES_COLUMNS))
+        psi = values[:, :1]
+        pi = values[:, 1:]
+    elif values.size == times.size * LEGACY_TIME_SERIES_COLUMN_COUNT:
+        # The completed pilot predates the single-observer output. Select its
+        # x=50 columns so that the saved run remains reproducible.
+        values = values.reshape(times.size, LEGACY_TIME_SERIES_COLUMN_COUNT)
+        psi = values[:, 1:2]
+        pi = values[:, 4:5]
+    else:
         raise ValueError(
-            "time-series size is inconsistent with the six-column output layout"
+            "time-series size is inconsistent with the two-column output layout"
         )
-    values = values.reshape(times.size, len(TIME_SERIES_COLUMNS))
-    psi = values[:, :3]
-    pi = values[:, 3:]
     return metadata, times, psi, pi
 
 
@@ -273,7 +276,10 @@ def plot_loglog(
     fit_start: float,
     fit_end: float,
 ) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharex=True)
+    figure, axes = plt.subplots(
+        1, len(OBSERVER_LABELS), figsize=(6, 4.5), sharex=True, squeeze=False
+    )
+    axes = axes[0]
     for observer_index, (axis, observer) in enumerate(zip(axes, OBSERVER_LABELS)):
         valid = (times > 0) & (np.abs(psi[:, observer_index]) > 0)
         axis.loglog(times[valid], np.abs(psi[valid, observer_index]), lw=0.8)
@@ -284,7 +290,8 @@ def plot_loglog(
     axes[0].set_ylabel(r"$|\psi|$")
     figure.suptitle(
         rf"SdS areal source: $q={float(metadata['q_9LambdaM2']):g}$, "
-        rf"$\ell={metadata['l']}$, $\beta={metadata['beta']}$"
+        rf"$s={metadata['s']}$, $\ell={metadata['l']}$, "
+        rf"$\beta={metadata['beta']}$"
     )
     figure.tight_layout()
     figure.savefig(output_path)
@@ -299,7 +306,9 @@ def plot_instantaneous_power(
     nominal_start: float,
     fit_end: float,
 ) -> None:
-    figure, axes = plt.subplots(2, 3, figsize=(15, 8), sharex="row")
+    figure, axes = plt.subplots(
+        2, len(OBSERVER_LABELS), figsize=(7, 8), sharex="row", squeeze=False
+    )
     for observer_index, observer in enumerate(OBSERVER_LABELS):
         overview_axis = axes[0, observer_index]
         fit_axis = axes[1, observer_index]
@@ -362,7 +371,9 @@ def plot_memory_residual(
     late_mask = times >= 0.9 * times[-1]
     memory = np.median(psi[late_mask], axis=0)
     residual = np.abs(psi - memory)
-    figure, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+    figure, axes = plt.subplots(
+        2, len(OBSERVER_LABELS), figsize=(7, 8), sharex=True, squeeze=False
+    )
     for observer_index, observer in enumerate(OBSERVER_LABELS):
         valid = (times > 0) & (residual[:, observer_index] > 0)
         axes[0, observer_index].loglog(
@@ -512,7 +523,7 @@ def analyze_run(
     derived = np.column_stack((times, powers))
     derived.astype(np.float64).tofile(run_directory / "instantaneous_power.dat")
     (run_directory / "instantaneous_power_columns.txt").write_text(
-        "t\np_loc_x0\np_loc_x50\np_loc_x100\n", encoding="utf-8"
+        "t\np_loc_x50\n", encoding="utf-8"
     )
 
     plot_loglog(

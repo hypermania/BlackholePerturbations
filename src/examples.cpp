@@ -675,27 +675,13 @@ long long int nearest_sds_grid_index(const SdSMasterPDEPrecise &equation,
 }
 
 
-std::vector<double> sds_areal_snapshot_times(void) {
-  return {
-      0, 10, 20, 30, 40, 50, 75, 100, 125, 150,
-      200, 250, 300, 350, 400, 450, 500, 550, 600,
-      650, 700, 750, 800, 850, 900, 950, 1000
-  };
-}
-
-
-template<typename Vector>
-Eigen::ArrayXd to_double_array(const Vector &values) {
-  return values.template cast<double>();
-}
-
 } // namespace
 
 
 /*!
   \brief Run one member of the sourced SdS areal-radius scan.
 
-  Here q = 9 Lambda M^2. The scan fixes s = 0, M = 0.5, and uses the
+  Here q = 9 Lambda M^2. The scan fixes M = 0.5 and uses the
   normalized nonzero-mean Gaussian source
 
     F(u) = A exp[-(u-u0)^2/(2 sigma^2)] / (sqrt(2 pi) sigma),  A = 1,
@@ -703,8 +689,8 @@ Eigen::ArrayXd to_double_array(const Vector &values) {
   multiplied by r^{-beta}. Every raw and derived artifact for one parameter
   set is stored in one output directory.
 */
-void run_sds_areal_scan(const std::string &q_text, const long long int l,
-                        const long long int beta) {
+void run_sds_areal_scan(const std::string &q_text, const long long int s,
+                        const long long int l, const long long int beta) {
   using namespace boost::numeric::odeint;
 
   omp_set_dynamic(0);
@@ -714,15 +700,18 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
   using Scalar = Equation::Scalar;
   using State = Equation::State;
 
+  if(s < 0 || s > 2) {
+    throw std::invalid_argument("S must be one of 0, 1, or 2");
+  }
   if(l < 0 || l > 3) {
     throw std::invalid_argument("L must be one of 0, 1, 2, or 3");
   }
+  if(l < s) throw std::invalid_argument("L must satisfy L >= S");
   if(beta < 0 || beta > 2) {
     throw std::invalid_argument("BETA must be one of 0, 1, or 2");
   }
   const SdSScanQ q = parse_sds_scan_q(q_text);
 
-  constexpr long long int s = 0;
   const Scalar M("0.5");
   const Scalar Lambda = q.value / (Scalar(9) * M * M);
   const Scalar x_min(-500);
@@ -765,21 +754,18 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
   source.cutoff_sigma = 12;
   Equation equation(param, SdSSource(source));
 
-  constexpr std::array<double, 3> requested_observers = {0, 50, 100};
-  std::array<long long int, requested_observers.size()> observer_indices;
-  std::vector<long long int> observed_components;
-  observed_components.reserve(2 * requested_observers.size());
-  for(std::size_t i = 0; i < requested_observers.size(); ++i) {
-    observer_indices[i] = nearest_sds_grid_index(
-        equation, requested_observers[i]);
-    observed_components.push_back(observer_indices[i]);
-  }
-  for(const long long int index : observer_indices) {
-    observed_components.push_back(index + equation.grid_size);
-  }
+  constexpr double requested_observer = 50;
+  const long long int observer_index = nearest_sds_grid_index(
+      equation, requested_observer);
+  const std::vector<long long int> observed_components = {
+      observer_index, observer_index + equation.grid_size};
 
   auto fixed_observer = FixedPositionObserver(dir, observed_components);
-  const std::vector<double> snapshot_times = sds_areal_snapshot_times();
+  const std::vector<double> snapshot_times = {
+      0, 10, 20, 30, 40, 50, 75, 100, 125, 150,
+      200, 250, 300, 350, 400, 450, 500, 550, 600,
+      650, 700, 750, 800, 850, 900, 950, 1000
+  };
   auto snapshot_observer = ApproximateTimeObserver(dir, snapshot_times);
   auto observer = ObserverPack(fixed_observer, snapshot_observer);
 
@@ -787,16 +773,20 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
   for(long long int i = 0; i < equation.grid_size; ++i) {
     x_grid[i] = equation.grid_coordinate(i).convert_to<double>();
   }
+  const Eigen::ArrayXd r_grid = equation.r.cast<double>();
+  const Eigen::ArrayXd f_grid = equation.f.cast<double>();
+  const Eigen::ArrayXd potential_grid = equation.V.cast<double>();
   write_to_file(x_grid, dir + "x_grid.dat");
-  write_to_file(to_double_array(equation.r), dir + "r_grid.dat");
-  write_to_file(to_double_array(equation.f), dir + "f_grid.dat");
-  write_to_file(to_double_array(equation.V), dir + "potential_grid.dat");
+  write_to_file(r_grid, dir + "r_grid.dat");
+  write_to_file(f_grid, dir + "f_grid.dat");
+  write_to_file(potential_grid, dir + "potential_grid.dat");
   write_to_file(snapshot_times, dir + "snapshot_times_requested.dat");
 
   const Scalar effective_u_min = source.u_center
                                  - source.cutoff_sigma * source.sigma;
-  const Scalar finite_domain_limit_x100 = Scalar(2) * x_max - Scalar(100)
-                                           + effective_u_min;
+  const Scalar finite_domain_limit = Scalar(2) * x_max
+                                     - Scalar(requested_observer)
+                                     + effective_u_min;
   {
     std::ofstream metadata(dir + "metadata.txt");
     metadata << std::setprecision(36)
@@ -832,18 +822,12 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
              << "kappa_black_hole " << equation.kappa_black_hole << '\n'
              << "kappa_cosmological " << equation.kappa_cosmological << '\n'
              << "tortoise_convention x(3M)=3M+2M*log(1/2)\n"
-             << "finite_domain_fit_limit_x100 "
-             << finite_domain_limit_x100 << '\n'
-             << "time_series_layout row_major"
-                "_[psi_x0,psi_x50,psi_x100,Pi_x0,Pi_x50,Pi_x100]\n";
-    for(std::size_t i = 0; i < requested_observers.size(); ++i) {
-      metadata << "observer_" << i << "_requested_x "
-               << requested_observers[i] << '\n'
-               << "observer_" << i << "_index " << observer_indices[i]
-               << '\n'
-               << "observer_" << i << "_actual_x "
-               << equation.grid_coordinate(observer_indices[i]) << '\n';
-    }
+             << "finite_domain_fit_limit " << finite_domain_limit << '\n'
+             << "time_series_layout row_major_[psi_x50,Pi_x50]\n"
+             << "observer_requested_x " << requested_observer << '\n'
+             << "observer_index " << observer_index << '\n'
+             << "observer_actual_x "
+             << equation.grid_coordinate(observer_index) << '\n';
   }
 
   State state = State::Zero(2 * equation.grid_size);
@@ -857,7 +841,8 @@ void run_sds_areal_scan(const std::string &q_text, const long long int l,
 
   fixed_observer.save();
   snapshot_observer.save();
-  write_to_file(to_double_array(state), dir + "final_state.dat");
+  const Eigen::ArrayXd final_state = state.cast<double>();
+  write_to_file(final_state, dir + "final_state.dat");
   {
     std::ofstream summary(dir + "run_summary.txt");
     summary << std::setprecision(17)

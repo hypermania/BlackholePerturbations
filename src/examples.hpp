@@ -7,7 +7,7 @@ void run_sourced_eqn(void);
 void run_coupled_eqn(void);
 void run_teukolsky_precise_eqn(void);
 void run_sds_precise_eqn(void);
-void run_sds_areal_scan(const std::string &q_text, long long int l,
-                        long long int beta);
+void run_sds_areal_scan(const std::string &q_text, long long int s,
+                        long long int l, long long int beta);
 
 #endif

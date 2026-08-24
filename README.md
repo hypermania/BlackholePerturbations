@@ -94,24 +94,26 @@ make check-sds-precise-sanitizers
 make check-sds-precise-performance
 ```
 
-See `SDS_PRECISE_REPORT.md` for the numerical design, validation matrix, and
-current scope. See `SDS_OPTIMIZATION_REPORT.md` for the paired attainable
+See `doc/SDS_PRECISE_REPORT.md` for the numerical design, validation matrix, and
+current scope. See `doc/SDS_OPTIMIZATION_REPORT.md` for the paired attainable
 ceiling, Dopri5 stage optimization, timing results, and randomized
 full-profile equivalence test.
 
 Run one member of the sourced SdS areal-radius scan with
 
 ```bash
-./main --sds-areal-scan 0.1 0 0
+./main --sds-areal-scan 0.1 0 0 0
 python3 script/analyze_sds_areal_scan.py \
   output/sds_areal_scan/q_01_l_0_beta_0
 ```
 
-The three arguments are $`q=9\Lambda M^2`$, $`\ell`$, and $`\beta`$.
+The four arguments are $`q=9\Lambda M^2`$, $`s`$, $`\ell`$, and $`\beta`$.
 The runner accepts the scan values $`q\in\{0.1,0.2,0.4,0.8\}`$,
-$`\ell\in\{0,1,2,3\}`$, and $`\beta\in\{0,1,2\}`$. One complete set of
-time series, snapshots, geometry metadata, fitted instantaneous slopes, and
-figures is stored in its `output/sds_areal_scan/q_XX_l_L_beta_B/` directory.
+$`s\in\{0,1,2\}`$, $`s\leq\ell\leq3`$, and
+$`\beta\in\{0,1,2\}`$. The time series contains $`\psi`$ and $`\Pi`$ at
+$`x=50`$, while snapshots contain the complete spatial profile. One complete
+set of outputs is stored in its `output/sds_areal_scan/q_XX_l_L_beta_B/`
+directory.
 The analysis fits
 
 $`p_{\rm loc}=d\ln|\psi|/d\ln t=t\Pi/\psi=a+b/(t-c)`$
@@ -122,5 +124,6 @@ and reports the signed tail power $`a`$. Run its focused synthetic check with
 make check-sds-areal-analysis
 ```
 
-See `CORRECTNESS_REPORT.md` for the tested parameter matrix and current CUDA and
-performance-test limitations.
+See `doc/SDS_AREAL_SCAN_REPORT.md` for the pilot result and its Jacobian-based
+fit assessment. See `doc/CORRECTNESS_REPORT.md` for the tested parameter matrix
+and current CUDA and performance-test limitations.

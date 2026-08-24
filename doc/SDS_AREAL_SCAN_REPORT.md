@@ -13,7 +13,7 @@ The planned matrix is
 q\equiv9\Lambda M^2\in\{0.1,0.2,0.4,0.8\}.
 \]
 
-Every run fixes \(s=0\) and \(M=0.5\), and uses
+The planned matrix fixes \(s=0\) and \(M=0.5\), and uses
 
 \[
 S(t,x)=F(t-x)r(x)^{-\beta},\qquad
@@ -31,14 +31,14 @@ x\in[-500,1000],\qquad \Delta x\simeq0.03,\qquad
 t\in[0,1000],\qquad \Delta t=0.01.
 \]
 
-Time series are saved at the nearest grid points to \(x=0,50,100\). Full
-\((\psi,\Pi)\) snapshots are saved at 27 requested times between \(t=0\) and
-\(t=1000\).
+The runner accepts \(s\) explicitly. It saves a time series at the nearest grid
+point to \(x=50\). Full \((\psi,\Pi)\) snapshots are saved at 27 requested
+times between \(t=0\) and \(t=1000\).
 
-One parameter triple is run with
+One parameter set is run with
 
 ```bash
-./main --sds-areal-scan Q L BETA
+./main --sds-areal-scan Q S L BETA
 ```
 
 and is stored in
@@ -47,10 +47,13 @@ and is stored in
 output/sds_areal_scan/q_XX_l_L_beta_B/
 ```
 
-The directory contains the parameter and geometry metadata, the three-observer
-time series, all snapshots, the final state, derived instantaneous slopes,
-fit results, and plots. Simulation arrays are binary double-precision files.
-They are generated data and remain excluded from Git.
+The directory contains the parameter and geometry metadata, the \(x=50\) time
+series, all snapshots, the final state, derived instantaneous slopes, fit
+results, and plots. Simulation arrays are binary double-precision files. They
+are generated data and remain excluded from Git. The completed pilot predates
+the single-observer output and retains its original \(x=0,50,100\) time series;
+the analysis script selects its \(x=50\) columns when reading that legacy
+layout.
 
 ## Tail extraction
 
@@ -118,6 +121,44 @@ is
 
 corresponding to the nonzero memory.
 
+### Jacobian assessment
+
+For the model
+
+\[
+p_{\rm loc}(t)=a+\frac{b}{t-c},
+\]
+
+the Jacobian at each fit time is
+
+\[
+J(t)=\left(1,\frac{1}{t-c},\frac{b}{(t-c)^2}\right).
+\]
+
+The derivative with respect to \(a\) is therefore exactly one for every data
+point. For the 5,000 samples in the nominal window,
+\(\lVert J_a\rVert_2=\sqrt{5000}=70.7107\). This value is fixed by the number
+of samples and does not by itself show that a fitted nonzero \(a\) is reliable.
+
+The nominal Jacobian diagnostics are
+
+| Observer | \(\lVert J_a\rVert_2\) | \(\lVert J_b\rVert_2\) | \(\lVert J_c\rVert_2\) | Singular values | Condition number |
+|---:|---:|---:|---:|---|---:|
+| 0 | 70.7107 | 1.8989 | \(5.03\times10^{-22}\) | \(70.716,1.702,2.13\times10^{-22}\) | \(3.32\times10^{23}\) |
+| 50 | 70.7107 | 1.8987 | \(7.77\times10^{-21}\) | \(70.716,1.702,3.29\times10^{-21}\) | \(2.15\times10^{22}\) |
+| 100 | 70.7107 | 1.8987 | \(7.24\times10^{-19}\) | \(70.716,1.702,3.07\times10^{-19}\) | \(2.30\times10^{20}\) |
+
+The \(c\) column is extremely small because the fitted \(b\) is already close
+to zero. The fit is therefore insensitive to \(c\), producing the tiny third
+singular value and rank-two numerical Jacobian. After projecting \(J_a\)
+orthogonally to the nuisance directions \(J_b\) and \(J_c\), its norm is about
+54.42, or 77% of its original norm. Thus \(a\) is locally the best-constrained
+parameter within this model. However, the dense samples are correlated, the
+fitted \(a\) is not stable under changes of the fitting window, and the
+resolved transient is exponential rather than algebraic. The Jacobian supports
+the conclusion that \(a\) is consistent with zero; it does not support the
+observer-dependent values near \(10^{-20}\) as resolved nonzero exponents.
+
 The approach to memory is exponential. A separate semilog diagnostic over
 \(t\in[250,450]\) gives
 
@@ -133,10 +174,10 @@ exponential relaxation, rather than a nonzero asymptotic power law.
 
 ## Issues to resolve before the full scan
 
-1. A six-thread production run takes about 90.6 minutes. The 48 cases would
-   require approximately 72.5 hours sequentially. We should benchmark
-   concurrent three-thread runs and/or optimize translated-Gaussian source
-   evaluation before launching the matrix.
+1. The pre-optimization pilot took 90.6 minutes. The optimized step benchmark
+   predicts about 75.7 minutes per case, or approximately 60.6 hours for 48
+   sequential cases. We should benchmark concurrent three-thread runs before
+   launching the matrix.
 2. The fixed nominal fit window is already beyond the resolved exponential
    transient for this pilot. Every run must retain the window-sensitivity and
    identifiability checks; the formal fit output alone is insufficient.

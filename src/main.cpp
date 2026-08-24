@@ -82,13 +82,15 @@ int main(int argc, char **argv) {
     return 0;
   }
   if(argc >= 2 && std::string(argv[1]) == "--sds-areal-scan") {
-    if(argc != 5) {
+    if(argc != 6) {
       std::cerr << "Usage: " << argv[0]
-                << " --sds-areal-scan Q L BETA\n";
+                << " --sds-areal-scan Q S L BETA\n";
       return 2;
     }
     try {
-      run_sds_areal_scan(argv[2], std::stoll(argv[3]), std::stoll(argv[4]));
+      run_sds_areal_scan(
+          argv[2], std::stoll(argv[3]), std::stoll(argv[4]),
+          std::stoll(argv[5]));
     } catch(const std::exception &error) {
       std::cerr << "SdS areal scan failed: " << error.what() << '\n';
       return 1;
