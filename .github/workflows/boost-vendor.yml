@@ -9,7 +9,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install the documented GCC 12 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++-12
       - name: Verify complete Boost tree and include closure
-        run: make check-boost-vendor
+        run: make HOST_COMPILER=g++-12 check-boost-vendor
       - name: Build the CPU application
-        run: make -j2 disable-cuda=true
+        run: make -j2 HOST_COMPILER=g++-12 disable-cuda=true
