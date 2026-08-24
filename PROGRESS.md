@@ -119,3 +119,27 @@ Commit: `a83d9ce`
 - Do not launch the full matrix by multiplying the single-run command until
   the measured 90.6-minute cost has been addressed and the pilot analysis has
   been reviewed.
+
+## 2026-08-24: Restore missing Boost.Typeof compatibility header
+
+Commit: `b21a18e7`
+
+### Problem encountered
+
+- The vendored Boost 1.84 subset included `boost/typeof/typeof.hpp`, which
+  expands an include of `boost/typeof/incr_registration_group.hpp`, but did
+  not include that compatibility header. Builds succeeded on machines where
+  GCC silently found a system Boost copy and failed on machines without it.
+
+### Solution
+
+- Added the missing five-line compatibility header byte-for-byte from the
+  official Boost 1.84 release. Dependency generation now resolves the include
+  from `external/boost`, and the normal and production precise-solver suites
+  pass.
+
+### How to avoid this problem
+
+- When updating the `bcp`-generated Boost subset, audit macro-generated
+  includes as well as literal includes and test from a machine without a
+  usable system Boost fallback.
