@@ -107,7 +107,7 @@ LDLIBS += $(foreach library,$(program_LIBRARIES),-l$(library))
 	check-precise-performance check-precise-correctness \
 	check-precise-sanitizers check-sds-precise-performance \
 	check-sds-precise-correctness check-sds-precise-sanitizers \
-	check-sds-areal-analysis
+	check-sds-areal-analysis check-boost-vendor
 
 all: $(program_NAME)
 
@@ -200,6 +200,9 @@ check-sds-precise-sanitizers:
 
 check-sds-areal-analysis:
 	python3 test/test_analyze_sds_areal_scan.py
+
+check-boost-vendor:
+	python3 script/verify_boost_vendor.py --compiler "$(HOST_COMPILER)"
 
 $(program_NAME): $(program_OBJS)
 	$(LINK.cc) $(program_OBJS) -o $(program_NAME) $(LDLIBS)

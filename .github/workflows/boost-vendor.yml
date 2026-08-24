@@ -1,0 +1,15 @@
+name: Vendored Boost
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify complete Boost tree and include closure
+        run: make check-boost-vendor
+      - name: Build the CPU application
+        run: make -j2 disable-cuda=true

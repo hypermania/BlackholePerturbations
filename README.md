@@ -48,11 +48,22 @@ Compiler requirement:
 1. A C++ compiler supporting C++20. I used [g++ 12.2.0](https://gcc.gnu.org/).
 2. CUDA compiler `nvcc` for compiler GPU kernels. See [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit).
 
-The codebase also makes use of `boost` and `Eigen` library, which are included in `/external`.
+The codebase also uses Boost and Eigen, which are included in `/external`.
+`external/boost/` contains the complete, unchanged public-header tree from the
+official Boost 1.84.0 release, so compilation does not require a system Boost
+installation. Its archive checksum and tree provenance are recorded in
+`external/BOOST_1_84_0_PROVENANCE.md`.
 
 Compilation should be as easy as running `make` at the project directory. Note that the compilation could take a while.
 
 ## Verification
+
+Verify that the complete fixed-version Boost tree is unchanged and that every
+transitive Boost include used by the project resolves inside `external/boost`:
+
+```bash
+make check-boost-vendor
+```
 
 Run the precise Teukolsky correctness matrix under normal and production flags:
 
