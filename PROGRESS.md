@@ -1,5 +1,41 @@
 # Progress log
 
+## 2026-08-24: Complete self-contained Boost 1.84 dependency
+
+Commit: `ba03321`
+
+### Problems encountered
+
+- The repository's fixed-version Boost directory was a 3,275-file
+  `bcp --scan` subset rather than the complete Boost 1.84 public-header tree.
+  `bcp` did not discover the macro-expanded include
+  `boost/typeof/incr_registration_group.hpp`.
+- Builds on this VPS succeeded accidentally by loading that missing header
+  from system Boost 1.74, mixing two Boost releases. A machine without the
+  system header failed while compiling `examples.cpp` and `main.cpp`.
+
+### Solutions
+
+- Replaced the subset with all 15,689 public-header files from the official
+  Boost 1.84.0 archive after verifying its published SHA-256. The previously
+  committed 3,275 files are byte-identical to the official release.
+- Added archive provenance, the official license, and a deterministic verifier
+  for version, file count, byte count, complete tree digest, and compiler
+  include closure. The current dependency graph resolves 1,789 Boost headers,
+  all under `external/boost`.
+- Added a CPU-build CI workflow and confirmed forced CPU, normal, production,
+  and sanitizer builds with no numerical regression.
+
+### How to avoid these problems
+
+- Do not use an unqualified `bcp --scan` result as a complete dependency:
+  macro-generated includes are not reliably visible to its scanner.
+- Verify vendored dependencies from a checksum-verified official archive and
+  audit the compiler's resolved include graph so a system-library fallback
+  cannot hide an incomplete tree.
+- Update Boost separately from numerical code and regenerate the recorded
+  provenance and tree fingerprint for every version change.
+
 ## 2026-08-24: SdS scan interface and fit documentation cleanup
 
 Commit: `ece9bcf`
