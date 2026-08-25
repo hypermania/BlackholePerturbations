@@ -1,5 +1,32 @@
 # Progress log
 
+## 2026-08-25: Exact integer parsing for SdS scan arguments
+
+Commit: `27da4915`
+
+### Problems encountered
+
+- `std::stoll` accepts a valid integer prefix without requiring the complete
+  CLI token to be integral, so an input such as `s=1.5` silently became
+  `s=1`.
+
+### Solutions
+
+- Added one whole-token `std::from_chars` parser for the integer-valued `s`
+  and `l` arguments. It accepts signed 64-bit integers, including an explicit
+  leading plus sign, and rejects fractional, malformed, empty, and
+  out-of-range tokens.
+- Kept syntax parsing at the CLI boundary and retained the nonnegative-spin
+  domain check only in `sds_precise.hpp`. Added unit and executable-level
+  regression checks that distinguish the two failures.
+
+### How to avoid these problems
+
+- When parsing numeric CLI arguments, require the conversion endpoint to equal
+  the end of the input rather than accepting a numeric prefix.
+- Keep textual syntax checks separate from physical-domain checks so each
+  invalid input has one authoritative rejection point.
+
 ## 2026-08-25: Continuous SdS q scan interface
 
 Commit: `5267a623`
