@@ -1,5 +1,32 @@
 # Progress log
 
+## 2026-08-25: Continuous SdS q scan interface
+
+Commit: `5267a623`
+
+### Problems encountered
+
+- The areal-scan runner accepted only four hardcoded values of
+  \(q=9\Lambda M^2\), preventing intermediate spacetime parameters.
+- Existing output directories use decimal-point-free labels such as `q_01`,
+  so accepting ordinary decimal text would have changed their naming scheme.
+
+### Solutions
+
+- Replaced the value lookup with decimal-code conversion: the CLI token `0123`
+  is converted exactly to binary128 `0.123` and retained as the directory
+  label `q_0123`.
+- Left the physical \(0<q<1\) constraint to the existing centralized SdS
+  geometry validation. Added exact conversion tests and a compiled CLI smoke
+  check for an intermediate value.
+
+### How to avoid these problems
+
+- Treat a finite experiment matrix as a sampling plan rather than an API
+  restriction unless the numerical equation itself imposes the bound.
+- Separate lossless input encoding from physical parameter validation, and
+  test both the encoded text and the resulting numerical value.
+
 ## 2026-08-25: Unrestricted SdS scan parameters
 
 Commit: `2b3df3ef`
