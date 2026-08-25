@@ -38,7 +38,9 @@ times between \(t=0\) and \(t=1000\).
 The historical matrix above is not an interface restriction. The runner
 accepts any \(0<q<1\) with a finite decimal encoding, any nonnegative integer
 \(s\), any integer \(\ell\), and any finite real \(\beta\). The \(q\) argument
-omits the decimal point, so `0123` denotes \(q=0.123\).
+omits the decimal point, so `0123` denotes \(q=0.123\). The complete \(s\) and
+\(\ell\) tokens must parse as integers; integer prefixes of fractional or
+otherwise malformed tokens are not accepted.
 
 One parameter set is run with
 

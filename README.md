@@ -111,7 +111,9 @@ The four arguments are $`q=9\Lambda M^2`$, $`s`$, $`\ell`$, and $`\beta`$.
 The first argument encodes $`q`$ by omitting the decimal point: for example,
 `0123` means $`q=0.123`$. Any encoded decimal satisfying $`0<q<1`$ is
 accepted, along with any nonnegative integer $`s`$, any integer $`\ell`$, and
-any finite real $`\beta`$. The time series contains $`\psi`$ and $`\Pi`$ at
+any finite real $`\beta`$. The complete $`s`$ and $`\ell`$ arguments must be
+valid integers; fractional or partially numeric tokens are rejected. The time
+series contains $`\psi`$ and $`\Pi`$ at
 $`x=50`$, while snapshots contain the complete spatial profile. One complete
 set of outputs is stored in its `output/sds_areal_scan/q_QCODE_l_L_beta_B/`
 directory.

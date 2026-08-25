@@ -89,7 +89,8 @@ int main(int argc, char **argv) {
     }
     try {
       run_sds_areal_scan(
-          argv[2], std::stoll(argv[3]), std::stoll(argv[4]),
+          argv[2], sds_parse_integer_argument(argv[3], "S"),
+          sds_parse_integer_argument(argv[4], "L"),
           argv[5]);
     } catch(const std::exception &error) {
       std::cerr << "SdS areal scan failed: " << error.what() << '\n';

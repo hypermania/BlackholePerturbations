@@ -189,6 +189,25 @@ void check_parameter_validation() {
           "decodes continuous q code");
   require(Scalar(sds_q_code_to_decimal("0123")) == Scalar("0.123"),
           "converts continuous q code exactly");
+  require(sds_parse_integer_argument("3", "S") == 3,
+          "accepts integer spin text");
+  require(sds_parse_integer_argument("+3", "S") == 3,
+          "accepts explicitly positive integer spin text");
+  require(sds_parse_integer_argument("-1", "S") == -1,
+          "leaves the negative-spin domain check to the equation");
+  auto rejects_integer_text = [](const char *text) {
+    try {
+      (void)sds_parse_integer_argument(text, "S");
+      return false;
+    } catch(const std::invalid_argument &) {
+      return true;
+    }
+  };
+  require(rejects_integer_text("1.5"), "rejects fractional spin text");
+  require(rejects_integer_text("2abc"), "rejects partial integer spin text");
+  require(rejects_integer_text(""), "rejects empty spin text");
+  require(rejects_integer_text("9223372036854775808"),
+          "rejects out-of-range spin text");
 
   auto rejects = [](const Param &param) {
     try {
