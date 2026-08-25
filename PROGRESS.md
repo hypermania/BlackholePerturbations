@@ -1,5 +1,39 @@
 # Progress log
 
+## 2026-08-25: Unrestricted SdS scan parameters
+
+Commit: `2b3df3ef`
+
+### Problems encountered
+
+- The scan runner duplicated the SdS parameter checks from the equation class
+  and restricted `s`, `l`, and `beta` to the original finite scan matrix.
+- The CLI parsed `beta` as an integer, so fractional powers could not reach the
+  existing binary128 source parameter.
+- Removing the integer bounds exposed signed-overflow risk in `s*s` and
+  `l*(l+1)` before those coefficients were converted to high precision.
+
+### Solutions
+
+- Kept parameter validation in `sds_precise.hpp`: `s` must be nonnegative,
+  `beta` must be finite, and `l` has no range or ordering restriction.
+- Parsed `beta` directly as binary128, retained a round-trip-safe value in
+  output directory names, and constructed the validated equation before
+  creating output files.
+- Converted `s` and `l` to the high-precision type before evaluating their
+  potential coefficients. Added normal, production, and sanitizer coverage
+  for fractional and negative beta, `s > 2`, unrestricted `l`, and extreme
+  64-bit coefficient inputs.
+
+### How to avoid these problems
+
+- Put reusable numerical-domain validation at the equation or source boundary,
+  not in individual runners.
+- Parse continuous numerical parameters directly into their computational
+  type and test values outside the initial experiment matrix.
+- Convert unrestricted integer parameters before arithmetic when the
+  destination type has a wider numerical range.
+
 ## 2026-08-24: SdS scan interface and fit documentation cleanup
 
 Commit: `ece9bcf`
