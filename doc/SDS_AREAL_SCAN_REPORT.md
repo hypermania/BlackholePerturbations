@@ -35,6 +35,10 @@ The runner accepts \(s\) explicitly. It saves a time series at the nearest grid
 point to \(x=50\). Full \((\psi,\Pi)\) snapshots are saved at 27 requested
 times between \(t=0\) and \(t=1000\).
 
+The historical matrix above is not an interface restriction. The runner
+accepts any nonnegative integer \(s\), any integer \(\ell\), and any finite
+real \(\beta\).
+
 One parameter set is run with
 
 ```bash

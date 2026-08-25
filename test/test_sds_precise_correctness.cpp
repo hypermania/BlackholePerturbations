@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -200,12 +201,40 @@ void check_parameter_validation() {
   param = make_param(0, 1, 12, "-10", "20");
   param.Lambda = Scalar("0.45");
   require(rejects(param), "rejects extremal or superextremal geometry");
+  param = make_param(-1, 1, 12, "-10", "20");
+  require(rejects(param), "rejects negative spin");
   param = make_param(3, 3, 12, "-10", "20");
-  require(rejects(param), "rejects unsupported spin");
+  require(!rejects(param), "accepts spin above two");
   param = make_param(2, 1, 12, "-10", "20");
-  require(rejects(param), "rejects l < s");
+  require(!rejects(param), "accepts l below spin");
+  param = make_param(0, -2, 12, "-10", "20");
+  require(!rejects(param), "accepts negative multipole");
+  param = make_param(0, 4, 12, "-10", "20");
+  require(!rejects(param), "accepts multipole above three");
+  param = make_param(std::numeric_limits<long long int>::max(),
+                     std::numeric_limits<long long int>::min(),
+                     12, "-10", "20");
+  require(!rejects(param), "accepts full-width spin and multipole values");
   param = make_param(0, 1, 3, "-10", "20");
   require(rejects(param), "rejects undersized grid");
+
+  auto rejects_source = [](const Scalar &beta) {
+    SdSTranslatedSourceParam source;
+    source.beta = beta;
+    try {
+      SdSSource validated_source(source);
+      (void)validated_source;
+      return false;
+    } catch(const std::invalid_argument &) {
+      return true;
+    }
+  };
+  require(!rejects_source(Scalar("2.5")), "accepts fractional beta");
+  require(!rejects_source(Scalar("-1.25")), "accepts negative beta");
+  require(rejects_source(std::numeric_limits<Scalar>::infinity()),
+          "rejects infinite beta");
+  require(rejects_source(std::numeric_limits<Scalar>::quiet_NaN()),
+          "rejects NaN beta");
 }
 
 void check_horizon_root_algorithms() {

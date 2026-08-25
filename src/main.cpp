@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     try {
       run_sds_areal_scan(
           argv[2], std::stoll(argv[3]), std::stoll(argv[4]),
-          std::stoll(argv[5]));
+          argv[5]);
     } catch(const std::exception &error) {
       std::cerr << "SdS areal scan failed: " << error.what() << '\n';
       return 1;

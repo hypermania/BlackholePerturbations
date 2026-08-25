@@ -108,9 +108,9 @@ python3 script/analyze_sds_areal_scan.py \
 ```
 
 The four arguments are $`q=9\Lambda M^2`$, $`s`$, $`\ell`$, and $`\beta`$.
-The runner accepts the scan values $`q\in\{0.1,0.2,0.4,0.8\}`$,
-$`s\in\{0,1,2\}`$, $`s\leq\ell\leq3`$, and
-$`\beta\in\{0,1,2\}`$. The time series contains $`\psi`$ and $`\Pi`$ at
+The runner accepts $`q\in\{0.1,0.2,0.4,0.8\}`$, any nonnegative integer
+$`s`$, any integer $`\ell`$, and any finite real $`\beta`$. The time series
+contains $`\psi`$ and $`\Pi`$ at
 $`x=50`$, while snapshots contain the complete spatial profile. One complete
 set of outputs is stored in its `output/sds_areal_scan/q_XX_l_L_beta_B/`
 directory.
