@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
   if(argc >= 2 && std::string(argv[1]) == "--sds-areal-scan") {
     if(argc != 6) {
       std::cerr << "Usage: " << argv[0]
-                << " --sds-areal-scan Q S L BETA\n";
+                << " --sds-areal-scan Q_CODE S L BETA\n";
       return 2;
     }
     try {

@@ -18,6 +18,7 @@
 #include <boost/numeric/odeint/external/eigen/eigen.hpp>
 
 #include "odeint_eigen/eigen_operations.hpp"
+#include "examples.hpp"
 #include "sds_precise.hpp"
 
 namespace {
@@ -182,6 +183,13 @@ Scalar compare_states(const State &actual, const State &expected,
 }
 
 void check_parameter_validation() {
+  require(sds_q_code_to_decimal("01") == "0.1",
+          "decodes legacy one-digit q code");
+  require(sds_q_code_to_decimal("0123") == "0.123",
+          "decodes continuous q code");
+  require(Scalar(sds_q_code_to_decimal("0123")) == Scalar("0.123"),
+          "converts continuous q code exactly");
+
   auto rejects = [](const Param &param) {
     try {
       Equation equation(param);
