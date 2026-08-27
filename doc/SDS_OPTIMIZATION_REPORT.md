@@ -10,7 +10,9 @@ IEEE binary128, and a fixed Dopri5 step has size `0.01`. The first pilot took
 The acceptance condition is that the homogeneous and sourced right-hand sides
 both sustain at least 90% of a matched minimum-kernel ceiling. We also require
 the optimized full-profile evolution to agree exactly with the previous
-implementation for seeded randomized input.
+implementation on the GCC 15.2 benchmark build. Since fast-math reassociation
+is compiler dependent, builds using other GCC versions must agree within
+binary128 roundoff.
 
 ## Performance model
 
@@ -60,10 +62,13 @@ unnecessary full-vector software multiplications per step.
    first coefficient once per vector operation. When it is exactly one, they
    copy or add the first input directly. The fallback path is unchanged for
    all other scalar types and coefficients.
-2. Under `-ffast-math`, GCC reassociates the old six-term expression. Its unit
-   path therefore uses the same libgcc binary128 additions and the exact old
-   addition tree while omitting only `1 * v1`. This retains bitwise identity;
-   the simpler reassociated expression did not.
+2. Under `-ffast-math`, GCC reassociates the old six-term expression, and the
+   selected tree differs between GCC 11 and GCC 15. The unit path therefore
+   uses explicit libgcc binary128 additions to impose a stable tree while
+   omitting only `1 * v1`. It is bitwise identical to the old expression on
+   the compiler used for the benchmark; portable cross-version checks require
+   binary128 roundoff equivalence because the compiler-generated reference is
+   itself version dependent.
 3. A direct `-march=native` versus `-march=alderlake` check found the existing
    Alder Lake setting slightly faster for this software-binary128 workload,
    despite the virtual AMD CPU label. The original production setting was
@@ -141,13 +146,19 @@ zero. The production benchmark also gives
 
 Normal, production, AddressSanitizer, and UndefinedBehaviorSanitizer tests pass
 for both the SdS equation and the shared Eigen/Odeint stage algebra. The
-Teukolsky correctness and performance checks also pass with the shared change.
+production stage-algebra check passes with both GCC 11 and GCC 15: exact
+unit-path identity is required without fast-math, while fast-math builds use a
+roundoff-level comparison against the compiler-dependent legacy expression.
+The Teukolsky correctness and performance checks also pass with the shared
+change.
 
 ## Remaining limit
 
 The optimized step now uses the minimum number of multiplications for the
-existing Dopri5 linear combinations while preserving the former binary128
-addition order, and the spatial operator saturates its matched ceiling. A
+existing Dopri5 linear combinations while imposing a stable binary128
+addition order, and the spatial operator saturates its matched ceiling. This
+order matches the former GCC 15.2 build exactly; a compiler-generated legacy
+expression may differ by binary128 roundoff on other GCC versions. A
 substantially shorter single-run time would require changing one of the current
 constraints, such as the time integrator, scalar precision, grid resolution,
 or number of CPU cores. Those changes would alter numerical semantics or

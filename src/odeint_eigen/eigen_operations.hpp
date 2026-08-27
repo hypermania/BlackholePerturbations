@@ -14,8 +14,10 @@
 
 #if defined(__GNUC__)
 // GCC lowers software binary128 arithmetic to these libgcc routines.  The
-// explicit calls below preserve the former -ffast-math addition tree while
-// removing only multiplication by the exact unit coefficient.
+// explicit calls below give the optimized unit-coefficient path a stable
+// addition tree while removing only multiplication by the exact unit
+// coefficient.  GCC's compiler-generated -ffast-math tree is version
+// dependent, so it is not a portable bitwise reference for this path.
 extern "C" float128_type __addtf3(float128_type, float128_type);
 extern "C" float128_type __multf3(float128_type, float128_type);
 #endif

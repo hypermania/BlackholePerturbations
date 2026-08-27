@@ -198,7 +198,17 @@ void check_scale_sums(Eigen::Index size, int threads, const std::string &label) 
         one, alpha[1], alpha[2], alpha[3], alpha[4], alpha[5]);
     optimized(actual, input[0], input[1], input[2], input[3], input[4], input[5]);
     reference(legacy, input[0], input[1], input[2], input[3], input[4], input[5]);
+#ifdef __FAST_MATH__
+    // GCC 11 and GCC 15 choose different permitted reassociation trees for
+    // the compiler-generated legacy expression.  The optimized path fixes a
+    // stable tree explicitly, so under fast-math the portable requirement is
+    // binary128 roundoff equivalence rather than compiler-version-dependent
+    // bitwise identity.
+    require(values_equal(actual, legacy),
+            label + " unit scale_sum6 roundoff equivalence");
+#else
     require(values_exactly_equal(actual, legacy), label + " unit scale_sum6 exact");
+#endif
   }
   {
     typename Operations::template scale_sum7<> optimized(
