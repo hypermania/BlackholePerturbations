@@ -102,17 +102,20 @@ full-profile equivalence test.
 Run one member of the sourced SdS areal-radius scan with
 
 ```bash
-./main --sds-areal-scan 0.1 0 0 0
+./main --sds-areal-scan 01 0 0 0
 python3 script/analyze_sds_areal_scan.py \
   output/sds_areal_scan/q_01_l_0_beta_0
 ```
 
 The four arguments are $`q=9\Lambda M^2`$, $`s`$, $`\ell`$, and $`\beta`$.
-The runner accepts the scan values $`q\in\{0.1,0.2,0.4,0.8\}`$,
-$`s\in\{0,1,2\}`$, $`s\leq\ell\leq3`$, and
-$`\beta\in\{0,1,2\}`$. The time series contains $`\psi`$ and $`\Pi`$ at
+The first argument encodes $`q`$ by omitting the decimal point: for example,
+`0123` means $`q=0.123`$. Any encoded decimal satisfying $`0<q<1`$ is
+accepted, along with any nonnegative integer $`s`$, any integer $`\ell`$, and
+any finite real $`\beta`$. The complete $`s`$ and $`\ell`$ arguments must be
+valid integers; fractional or partially numeric tokens are rejected. The time
+series contains $`\psi`$ and $`\Pi`$ at
 $`x=50`$, while snapshots contain the complete spatial profile. One complete
-set of outputs is stored in its `output/sds_areal_scan/q_XX_l_L_beta_B/`
+set of outputs is stored in its `output/sds_areal_scan/q_QCODE_l_L_beta_B/`
 directory.
 The analysis fits
 

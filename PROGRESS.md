@@ -1,5 +1,93 @@
 # Progress log
 
+## 2026-08-25: Exact integer parsing for SdS scan arguments
+
+Commit: `27da4915`
+
+### Problems encountered
+
+- `std::stoll` accepts a valid integer prefix without requiring the complete
+  CLI token to be integral, so an input such as `s=1.5` silently became
+  `s=1`.
+
+### Solutions
+
+- Added one whole-token `std::from_chars` parser for the integer-valued `s`
+  and `l` arguments. It accepts signed 64-bit integers, including an explicit
+  leading plus sign, and rejects fractional, malformed, empty, and
+  out-of-range tokens.
+- Kept syntax parsing at the CLI boundary and retained the nonnegative-spin
+  domain check only in `sds_precise.hpp`. Added unit and executable-level
+  regression checks that distinguish the two failures.
+
+### How to avoid these problems
+
+- When parsing numeric CLI arguments, require the conversion endpoint to equal
+  the end of the input rather than accepting a numeric prefix.
+- Keep textual syntax checks separate from physical-domain checks so each
+  invalid input has one authoritative rejection point.
+
+## 2026-08-25: Continuous SdS q scan interface
+
+Commit: `5267a623`
+
+### Problems encountered
+
+- The areal-scan runner accepted only four hardcoded values of
+  \(q=9\Lambda M^2\), preventing intermediate spacetime parameters.
+- Existing output directories use decimal-point-free labels such as `q_01`,
+  so accepting ordinary decimal text would have changed their naming scheme.
+
+### Solutions
+
+- Replaced the value lookup with decimal-code conversion: the CLI token `0123`
+  is converted exactly to binary128 `0.123` and retained as the directory
+  label `q_0123`.
+- Left the physical \(0<q<1\) constraint to the existing centralized SdS
+  geometry validation. Added exact conversion tests and a compiled CLI smoke
+  check for an intermediate value.
+
+### How to avoid these problems
+
+- Treat a finite experiment matrix as a sampling plan rather than an API
+  restriction unless the numerical equation itself imposes the bound.
+- Separate lossless input encoding from physical parameter validation, and
+  test both the encoded text and the resulting numerical value.
+
+## 2026-08-25: Unrestricted SdS scan parameters
+
+Commit: `2b3df3ef`
+
+### Problems encountered
+
+- The scan runner duplicated the SdS parameter checks from the equation class
+  and restricted `s`, `l`, and `beta` to the original finite scan matrix.
+- The CLI parsed `beta` as an integer, so fractional powers could not reach the
+  existing binary128 source parameter.
+- Removing the integer bounds exposed signed-overflow risk in `s*s` and
+  `l*(l+1)` before those coefficients were converted to high precision.
+
+### Solutions
+
+- Kept parameter validation in `sds_precise.hpp`: `s` must be nonnegative,
+  `beta` must be finite, and `l` has no range or ordering restriction.
+- Parsed `beta` directly as binary128, retained a round-trip-safe value in
+  output directory names, and constructed the validated equation before
+  creating output files.
+- Converted `s` and `l` to the high-precision type before evaluating their
+  potential coefficients. Added normal, production, and sanitizer coverage
+  for fractional and negative beta, `s > 2`, unrestricted `l`, and extreme
+  64-bit coefficient inputs.
+
+### How to avoid these problems
+
+- Put reusable numerical-domain validation at the equation or source boundary,
+  not in individual runners.
+- Parse continuous numerical parameters directly into their computational
+  type and test values outside the initial experiment matrix.
+- Convert unrestricted integer parameters before arithmetic when the
+  destination type has a wider numerical range.
+
 ## 2026-08-24: SdS scan interface and fit documentation cleanup
 
 Commit: `ece9bcf`

@@ -31,6 +31,7 @@
 
 #include <Eigen/Dense>
 #include <boost/math/constants/constants.hpp>
+#include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/math/tools/roots.hpp>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <boost/multiprecision/eigen.hpp>
@@ -219,6 +220,9 @@ struct SdSSource {
   Vector spatial_profile;
 
   static void validate(const SdSTranslatedSourceParam &source_param) {
+    if(!boost::math::isfinite(source_param.beta)) {
+      throw std::invalid_argument("SdS source beta must be finite");
+    }
     if(!(source_param.sigma > 0) || !(source_param.cutoff_sigma > 0)) {
       throw std::invalid_argument("SdS source requires positive Gaussian widths");
     }
@@ -412,6 +416,12 @@ struct SdSMasterPDEPrecise {
     r_negative = geometry.ro.convert_to<Scalar>();
     const HighPrecisionScalar mass_hp(param.M);
     const HighPrecisionScalar lambda_hp(param.Lambda);
+    const HighPrecisionScalar spin_hp(param.s);
+    const HighPrecisionScalar multipole_hp(param.l);
+    const HighPrecisionScalar angular_coefficient =
+        multipole_hp * (multipole_hp + HighPrecisionScalar(1));
+    const HighPrecisionScalar spin_coefficient =
+        HighPrecisionScalar(1) - spin_hp * spin_hp;
     auto f_prime = [&](const HighPrecisionScalar &radius) {
       return HighPrecisionScalar(2) * mass_hp / (radius * radius)
              - HighPrecisionScalar(2) * lambda_hp * radius
@@ -450,9 +460,8 @@ struct SdSMasterPDEPrecise {
             / (HighPrecisionScalar(3) * point.r);
         const HighPrecisionScalar inv_r = HighPrecisionScalar(1) / point.r;
         const HighPrecisionScalar potential_hp = f_hp * (
-            HighPrecisionScalar(param.l * (param.l + 1)) * inv_r * inv_r
-            + HighPrecisionScalar(1 - param.s * param.s)
-                  * HighPrecisionScalar(2) * mass_hp
+            angular_coefficient * inv_r * inv_r
+            + spin_coefficient * HighPrecisionScalar(2) * mass_hp
                   * inv_r * inv_r * inv_r);
 
         r[i] = point.r.convert_to<Scalar>();
@@ -588,11 +597,8 @@ struct SdSMasterPDEPrecise {
     if(!(Scalar(9) * param.Lambda * param.M * param.M < Scalar(1))) {
       throw std::invalid_argument("SdS requires 9 Lambda M^2 < 1");
     }
-    if(param.s < 0 || param.s > 2) {
-      throw std::invalid_argument("SdS master spin must be 0, 1, or 2");
-    }
-    if(param.l < param.s) {
-      throw std::invalid_argument("SdS multipole must satisfy l >= s");
+    if(param.s < 0) {
+      throw std::invalid_argument("SdS master spin must be nonnegative");
     }
     if(param.N < 4) throw std::invalid_argument("SdS requires N >= 4");
     if(!(param.r_max > param.r_min)) {

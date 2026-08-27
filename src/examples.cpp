@@ -26,6 +26,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <omp.h>
@@ -648,22 +649,6 @@ namespace {
 
 using SdSScalar = SdSMasterPDEPrecise::Scalar;
 
-struct SdSScanQ {
-  SdSScalar value;
-  const char *directory_code;
-};
-
-
-SdSScanQ parse_sds_scan_q(const std::string &q_text) {
-  const SdSScalar q(q_text);
-  if(q == SdSScalar("0.1")) return {q, "01"};
-  if(q == SdSScalar("0.2")) return {q, "02"};
-  if(q == SdSScalar("0.4")) return {q, "04"};
-  if(q == SdSScalar("0.8")) return {q, "08"};
-  throw std::invalid_argument("Q must be one of 0.1, 0.2, 0.4, or 0.8");
-}
-
-
 long long int nearest_sds_grid_index(const SdSMasterPDEPrecise &equation,
                                      const double requested_x) {
   const SdSScalar continuous_index =
@@ -689,8 +674,9 @@ long long int nearest_sds_grid_index(const SdSMasterPDEPrecise &equation,
   multiplied by r^{-beta}. Every raw and derived artifact for one parameter
   set is stored in one output directory.
 */
-void run_sds_areal_scan(const std::string &q_text, const long long int s,
-                        const long long int l, const long long int beta) {
+void run_sds_areal_scan(const std::string &q_code, const long long int s,
+                        const long long int l,
+                        const std::string &beta_text) {
   using namespace boost::numeric::odeint;
 
   omp_set_dynamic(0);
@@ -700,20 +686,11 @@ void run_sds_areal_scan(const std::string &q_text, const long long int s,
   using Scalar = Equation::Scalar;
   using State = Equation::State;
 
-  if(s < 0 || s > 2) {
-    throw std::invalid_argument("S must be one of 0, 1, or 2");
-  }
-  if(l < 0 || l > 3) {
-    throw std::invalid_argument("L must be one of 0, 1, 2, or 3");
-  }
-  if(l < s) throw std::invalid_argument("L must satisfy L >= S");
-  if(beta < 0 || beta > 2) {
-    throw std::invalid_argument("BETA must be one of 0, 1, or 2");
-  }
-  const SdSScanQ q = parse_sds_scan_q(q_text);
+  const Scalar q(sds_q_code_to_decimal(q_code));
+  const Scalar beta(beta_text);
 
   const Scalar M("0.5");
-  const Scalar Lambda = q.value / (Scalar(9) * M * M);
+  const Scalar Lambda = q / (Scalar(9) * M * M);
   const Scalar x_min(-500);
   const Scalar x_max(1000);
   const Scalar nominal_dx("0.03");
@@ -722,12 +699,6 @@ void run_sds_areal_scan(const std::string &q_text, const long long int s,
   const Scalar t_start(0);
   const Scalar t_end(1000);
   const Scalar delta_t("0.01");
-
-  std::ostringstream directory;
-  directory << "output/sds_areal_scan/q_" << q.directory_code
-            << "_l_" << l << "_beta_" << beta << "/";
-  const std::string dir = directory.str();
-  prepare_directory_for_output(dir);
 
   Param param;
   param.s = s;
@@ -741,18 +712,26 @@ void run_sds_areal_scan(const std::string &q_text, const long long int s,
   param.t_end = t_end;
   param.t_interval = delta_t;
   param.delta_t = delta_t;
-  save_param_for_Mathematica(param, dir);
-
   SdSTranslatedSourceParam source;
   source.profile = SdSSourceProfile::ArealPower;
   source.waveform = SdSWaveform::Gaussian;
-  source.beta = Scalar(beta);
+  source.beta = beta;
   source.amplitude = 1;
   source.u_center = -10;
   source.sigma = Scalar("0.5");
   source.onset_time = t_start;
   source.cutoff_sigma = 12;
   Equation equation(param, SdSSource(source));
+
+  std::ostringstream beta_label;
+  beta_label << std::setprecision(std::numeric_limits<Scalar>::max_digits10)
+             << beta;
+  std::ostringstream directory;
+  directory << "output/sds_areal_scan/q_" << q_code
+            << "_l_" << l << "_beta_" << beta_label.str() << "/";
+  const std::string dir = directory.str();
+  prepare_directory_for_output(dir);
+  save_param_for_Mathematica(param, dir);
 
   constexpr double requested_observer = 50;
   const long long int observer_index = nearest_sds_grid_index(
@@ -790,9 +769,9 @@ void run_sds_areal_scan(const std::string &q_text, const long long int s,
   {
     std::ofstream metadata(dir + "metadata.txt");
     metadata << std::setprecision(36)
-             << "run_name q_" << q.directory_code << "_l_" << l
-             << "_beta_" << beta << '\n'
-             << "q_9LambdaM2 " << q.value << '\n'
+             << "run_name q_" << q_code << "_l_" << l
+             << "_beta_" << beta_label.str() << '\n'
+             << "q_9LambdaM2 " << q << '\n'
              << "s " << s << '\n'
              << "l " << l << '\n'
              << "beta " << beta << '\n'

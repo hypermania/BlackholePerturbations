@@ -35,16 +35,23 @@ The runner accepts \(s\) explicitly. It saves a time series at the nearest grid
 point to \(x=50\). Full \((\psi,\Pi)\) snapshots are saved at 27 requested
 times between \(t=0\) and \(t=1000\).
 
+The historical matrix above is not an interface restriction. The runner
+accepts any \(0<q<1\) with a finite decimal encoding, any nonnegative integer
+\(s\), any integer \(\ell\), and any finite real \(\beta\). The \(q\) argument
+omits the decimal point, so `0123` denotes \(q=0.123\). The complete \(s\) and
+\(\ell\) tokens must parse as integers; integer prefixes of fractional or
+otherwise malformed tokens are not accepted.
+
 One parameter set is run with
 
 ```bash
-./main --sds-areal-scan Q S L BETA
+./main --sds-areal-scan Q_CODE S L BETA
 ```
 
 and is stored in
 
 ```text
-output/sds_areal_scan/q_XX_l_L_beta_B/
+output/sds_areal_scan/q_QCODE_l_L_beta_B/
 ```
 
 The directory contains the parameter and geometry metadata, the \(x=50\) time
